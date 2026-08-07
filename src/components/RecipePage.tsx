@@ -1,7 +1,8 @@
-import { useState, type ReactNode } from 'react'
-import { ArrowLeft, Bookmark, ChefHat, Clock, ListChecks, Utensils, Users } from 'lucide-react'
+import { useRef, useState, type ReactNode } from 'react'
+import { ArrowLeft, Bookmark, Camera, ChefHat, Clock, ListChecks, Utensils, Users } from 'lucide-react'
 import type { Recipe } from '@/lib/types'
 import { cn } from '@/lib/utils'
+import { api } from '@/lib/api'
 import { GlassCard } from './GlassCard'
 import { TagChip } from './TagChip'
 
@@ -12,6 +13,7 @@ interface RecipePageProps {
   isSaved: boolean
   onBack: () => void
   onToggleSave: () => void
+  onImageUploaded: (recipe: Recipe) => void
 }
 
 function HeroFallback({ title }: { title: string }) {
@@ -25,9 +27,27 @@ function HeroFallback({ title }: { title: string }) {
   )
 }
 
-export function RecipePage({ recipe, isSaved, onBack, onToggleSave }: RecipePageProps) {
+export function RecipePage({ recipe, isSaved, onBack, onToggleSave, onImageUploaded }: RecipePageProps) {
   const [section, setSection] = useState<Section>('ingredients')
   const [badImage, setBadImage] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const fileRef = useRef<HTMLInputElement | null>(null)
+
+  const handleFile = async (file: File | undefined | null) => {
+    if (!file) return
+    setUploading(true)
+    setUploadError(null)
+    try {
+      const image = await api.uploadRecipeImage(recipe.id, file)
+      setBadImage(false)
+      onImageUploaded({ ...recipe, image })
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Upload failed')
+    } finally {
+      setUploading(false)
+    }
+  }
 
   const meta: Array<{ icon: ReactNode; label: string }> = []
   if (recipe.time) meta.push({ icon: <Clock className="h-4 w-4" />, label: recipe.time })
@@ -66,15 +86,46 @@ export function RecipePage({ recipe, isSaved, onBack, onToggleSave }: RecipePage
             >
               <ArrowLeft className="h-5 w-5" />
             </button>
-            <button
-              type="button"
-              onClick={onToggleSave}
-              aria-pressed={isSaved}
-              aria-label={isSaved ? 'Remove from saved' : 'Save recipe'}
-              className="glass-strong pressable flex h-11 w-11 items-center justify-center rounded-full text-ink"
-            >
-              <Bookmark className="h-5 w-5" strokeWidth={2} fill={isSaved ? 'currentColor' : 'none'} />
-            </button>
+            <div className="flex items-center gap-2">
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  void handleFile(e.target.files?.[0])
+                  e.target.value = ''
+                }}
+              />
+              {isSaved && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => fileRef.current?.click()}
+                    disabled={uploading}
+                    aria-label="Upload photo"
+                    className="glass-strong pressable flex h-11 items-center justify-center gap-1.5 rounded-full px-4 text-[13px] font-semibold text-ink"
+                  >
+                    <Camera className="h-4 w-4" />
+                    {uploading ? 'Adding…' : recipe.image ? 'Change photo' : 'Add photo'}
+                  </button>
+                  {uploadError && (
+                    <span className="glass-strong max-w-[200px] rounded-full px-3 py-1.5 text-[11px] font-medium text-red-500">
+                      {uploadError}
+                    </span>
+                  )}
+                </>
+              )}
+              <button
+                type="button"
+                onClick={onToggleSave}
+                aria-pressed={isSaved}
+                aria-label={isSaved ? 'Remove from saved' : 'Save recipe'}
+                className="glass-strong pressable flex h-11 w-11 items-center justify-center rounded-full text-ink"
+              >
+                <Bookmark className="h-5 w-5" strokeWidth={2} fill={isSaved ? 'currentColor' : 'none'} />
+              </button>
+            </div>
           </div>
         </div>
       </div>

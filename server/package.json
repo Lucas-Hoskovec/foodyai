@@ -1,0 +1,16 @@
+{
+  "name": "foody-server",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch --env-file=../.env server.js",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "multer": "^2.2.0",
+    "pg": "^8.13.1"
+  }
+}

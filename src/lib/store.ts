@@ -1,110 +1,145 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { Preferences, Recipe } from './types'
-
-const HISTORY_KEY = 'foody.history.v1'
-const SAVED_KEY = 'foody.saved.v1'
-const PREFS_KEY = 'foody.prefs.v1'
+import type { FridgeItem, Preferences, Recipe } from './types'
+import { api } from './api'
 
 const EMPTY_PREFS: Preferences = { likes: [], dislikes: [], lastSpeech: '' }
+const HISTORY_LIMIT = 30
 
-function readList(key: string): Recipe[] {
-  if (typeof window === 'undefined') return []
-  try {
-    const raw = window.localStorage.getItem(key)
-    if (!raw) return []
-    const parsed = JSON.parse(raw) as unknown
-    return Array.isArray(parsed) ? (parsed as Recipe[]) : []
-  } catch {
-    return []
-  }
-}
+/**
+ * Backend-backed store for history + saved recipes + preferences.
+ *
+ * When `active` is false (guest / not signed in), all state is kept in memory
+ * for the session only — no API calls are made and nothing is persisted.
+ */
+export function useFoodyStore(active = true) {
+  const [history, setHistory] = useState<Recipe[]>([])
+  const [saved, setSaved] = useState<Recipe[]>([])
+  const [prefs, setPrefs] = useState<Preferences>(EMPTY_PREFS)
+  const [fridge, setFridgeState] = useState<FridgeItem[]>([])
+  const [fridgeMode, setFridgeModeState] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-function writeList(key: string, list: Recipe[]) {
-  try {
-    window.localStorage.setItem(key, JSON.stringify(list))
-  } catch {
-    // storage unavailable — ignore
-  }
-}
-
-function readPrefs(): Preferences {
-  if (typeof window === 'undefined') return EMPTY_PREFS
-  try {
-    const raw = window.localStorage.getItem(PREFS_KEY)
-    if (!raw) return EMPTY_PREFS
-    const parsed = JSON.parse(raw) as Partial<Preferences>
-    return {
-      likes: Array.isArray(parsed.likes) ? parsed.likes.filter((v): v is string => typeof v === 'string') : [],
-      dislikes: Array.isArray(parsed.dislikes)
-        ? parsed.dislikes.filter((v): v is string => typeof v === 'string')
-        : [],
-      lastSpeech: typeof parsed.lastSpeech === 'string' ? parsed.lastSpeech : '',
+  useEffect(() => {
+    if (!active) {
+      setLoading(false)
+      return
     }
-  } catch {
-    return EMPTY_PREFS
-  }
-}
-
-function writePrefs(prefs: Preferences) {
-  try {
-    window.localStorage.setItem(PREFS_KEY, JSON.stringify(prefs))
-  } catch {
-    // storage unavailable — ignore
-  }
-}
-
-/** Simple reactive localStorage store for history + saved recipes. */
-export function useFoodyStore() {
-  const [history, setHistory] = useState<Recipe[]>(() => readList(HISTORY_KEY))
-  const [saved, setSaved] = useState<Recipe[]>(() => readList(SAVED_KEY))
-  const [prefs, setPrefs] = useState<Preferences>(() => readPrefs())
-
-  useEffect(() => writeList(HISTORY_KEY, history), [history])
-  useEffect(() => writeList(SAVED_KEY, saved), [saved])
+    let alive = true
+    api
+      .fetchData()
+      .then((data) => {
+        if (!alive) return
+        if (Array.isArray(data.history)) setHistory(data.history)
+        if (Array.isArray(data.saved)) setSaved(data.saved)
+        if (data.prefs) setPrefs(data.prefs)
+        if (Array.isArray(data.fridge)) setFridgeState(data.fridge)
+        if (typeof data.fridgeMode === 'boolean') setFridgeModeState(data.fridgeMode)
+      })
+      .catch(async () => {
+        if (!alive) return
+        setError('Could not load your data')
+      })
+      .finally(() => {
+        if (alive) setLoading(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [active])
 
   const savedIds = useMemo(() => new Set(saved.map((recipe) => recipe.id)), [saved])
 
   const addToHistory = useCallback((recipe: Recipe) => {
-    setHistory((prev) => [recipe, ...prev.filter((item) => item.id !== recipe.id)].slice(0, 30))
-  }, [])
+    setHistory((prev) => [recipe, ...prev.filter((item) => item.id !== recipe.id)].slice(0, HISTORY_LIMIT))
+    if (!active) return
+    void api.addRecipe(recipe).then((data) => {
+      if (Array.isArray(data.history)) setHistory(data.history)
+      if (Array.isArray(data.saved)) setSaved(data.saved)
+    })
+  }, [active])
 
   const toggleSaved = useCallback((recipe: Recipe) => {
+    const currentlySaved = savedIds.has(recipe.id)
     setSaved((prev) =>
-      prev.some((item) => item.id === recipe.id)
+      currentlySaved
         ? prev.filter((item) => item.id !== recipe.id)
-        : [recipe, ...prev],
+        : [recipe, ...prev.filter((item) => item.id !== recipe.id)],
     )
-  }, [])
+    if (!active) return
+    void api.setSaved(recipe.id, !currentlySaved).then((data) => {
+      if (Array.isArray(data.saved)) setSaved(data.saved)
+    })
+  }, [savedIds, active])
 
   const removeFromHistory = useCallback((id: string) => {
     setHistory((prev) => prev.filter((item) => item.id !== id))
+    if (!active) return
+    void api.deleteRecipe(id)
+  }, [active])
+
+  const updateRecipeImage = useCallback((id: string, image: string) => {
+    setHistory((prev) => prev.map((item) => (item.id === id ? { ...item, image } : item)))
+    setSaved((prev) => prev.map((item) => (item.id === id ? { ...item, image } : item)))
   }, [])
 
-  const clearHistory = useCallback(() => setHistory([]), [])
+  const clearHistory = useCallback(() => {
+    setHistory([])
+    if (!active) return
+    void api.clearHistory()
+  }, [active])
 
   const isSaved = useCallback((id: string) => savedIds.has(id), [savedIds])
 
-  useEffect(() => writePrefs(prefs), [prefs])
-
   const setPreferences = useCallback((next: Preferences) => {
     setPrefs(next)
-  }, [])
+    if (!active) return
+    void api.savePrefs(next)
+  }, [active])
 
   const removePreference = useCallback((list: 'likes' | 'dislikes', item: string) => {
-    setPrefs((prev) => ({ ...prev, [list]: prev[list].filter((entry) => entry !== item) }))
-  }, [])
+    setPrefs((prev) => {
+      const next = { ...prev, [list]: prev[list].filter((entry) => entry !== item) }
+      if (active) void api.savePrefs(next)
+      return next
+    })
+  }, [active])
+
+  const setFridge = useCallback((next: FridgeItem[]) => {
+    setFridgeState(next)
+    if (!active) return
+    void api.saveFridge(next).then((data) => {
+      if (Array.isArray(data.fridge)) setFridgeState(data.fridge)
+      if (typeof data.fridgeMode === 'boolean') setFridgeModeState(data.fridgeMode)
+    })
+  }, [active])
+
+  const setFridgeMode = useCallback((on: boolean) => {
+    setFridgeModeState(on)
+    if (!active) return
+    void api.saveFridgeMode(on).then((data) => {
+      if (typeof data.fridgeMode === 'boolean') setFridgeModeState(data.fridgeMode)
+    })
+  }, [active])
 
   return {
     history,
     saved,
     prefs,
+    fridge,
+    fridgeMode,
+    loading,
+    error,
     isSaved,
     addToHistory,
     toggleSaved,
     removeFromHistory,
     clearHistory,
+    updateRecipeImage,
     setPreferences,
     removePreference,
+    setFridge,
+    setFridgeMode,
   }
 }
 

@@ -12,7 +12,13 @@ dist
 dist-ssr
 *.local
 
-# Secrets and local env (contains the NIM API key - NEVER commit)
+# Server runtime
+server/node_modules
+server/generated
+server/data
+server/uploads
+
+# Environment (holds the NIM key) — never commit
 .env
 .env.*
 !.env.example

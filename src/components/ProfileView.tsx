@@ -4,6 +4,8 @@ import { GlassCard } from '@/components/GlassCard'
 import { cn } from '@/lib/utils'
 
 interface ProfileViewProps {
+  username: string
+  avatar: string | null
   likes: string[]
   dislikes: string[]
   lastSpeech: string
@@ -45,6 +47,8 @@ function capitalizeAll(text: string): string {
 }
 
 export function ProfileView({
+  username,
+  avatar,
   likes,
   dislikes,
   lastSpeech,
@@ -61,12 +65,25 @@ export function ProfileView({
   return (
     <div className="flex min-h-full flex-col pb-6">
       <header className="flex items-center gap-3 pt-2">
-        <div className="glass-strong flex h-12 w-12 items-center justify-center rounded-2xl">
-          <Sparkles className="h-6 w-6 text-ink" />
-        </div>
-        <div className="flex-1">
-          <h1 className="text-[22px] font-bold leading-tight">My FoodyAI</h1>
-          <p className="text-[13px] text-ink-soft">Your personal taste profile</p>
+        {avatar ? (
+          <img
+            src={avatar}
+            alt="Profile"
+            className="glass-strong h-12 w-12 rounded-2xl object-cover"
+            onError={(e) => {
+              ;(e.currentTarget as HTMLImageElement).style.display = 'none'
+            }}
+          />
+        ) : (
+          <div className="glass-strong flex h-12 w-12 items-center justify-center rounded-2xl">
+            <Sparkles className="h-6 w-6 text-ink" />
+          </div>
+        )}
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-[22px] font-bold leading-tight">{username}</h1>
+            <p className="text-[13px] text-ink-soft">Your personal taste profile</p>
+          </div>
         </div>
       </header>
 
@@ -146,7 +163,7 @@ export function ProfileView({
 
         <p className="mt-3 max-w-[260px] text-center text-[13px] leading-snug text-ink-faint">
           {listening
-            ? 'Listening… tell FoodyAI what to add or remove.'
+            ? 'Listening… tell Foody AI what to add or remove.'
             : 'Tap the mic and talk about what you like — or what you don’t.'}
         </p>
       </div>

@@ -12,7 +12,3 @@ export function sleep(ms: number) {
 export function nowId() {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`
 }
-
-export function clampText(text: string, max: number) {
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text
-}

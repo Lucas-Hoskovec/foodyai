@@ -2,9 +2,9 @@ import { useCallback, useRef, useState } from 'react'
 import { Clock, Mic as MicIcon, RotateCcw, Send, Sparkles, Trash2 } from 'lucide-react'
 import type { Phase, Recipe, Tab } from '@/lib/types'
 import { useVoice } from '@/lib/voice'
-import { parseIntent, generateRecipe, updatePreferences } from '@/lib/nim'
-import { foodImageFallback } from '@/lib/images'
+import { parseIntent, generateRecipe, updatePreferences, updateFridge } from '@/lib/nim'
 import { useFoodyStore } from '@/lib/store'
+import { useAuth, type Auth } from '@/lib/auth'
 import { cn } from '@/lib/utils'
 import { TabBar } from '@/components/TabBar'
 import { GlassCard } from '@/components/GlassCard'
@@ -12,6 +12,11 @@ import { RecipePage } from '@/components/RecipePage'
 import { EmptyState } from '@/components/EmptyState'
 import { RecipeListItem } from '@/components/RecipeListItem'
 import { ProfileView } from '@/components/ProfileView'
+import { AuthScreen } from '@/components/AuthScreen'
+import { ProfileMenu } from '@/components/ProfileMenu'
+import { ProfileSettings } from '@/components/ProfileSettings'
+import { FridgeView } from '@/components/FridgeView'
+import { FridgeAddModal } from '@/components/FridgeAddModal'
 
 const EXAMPLE_POOL = [
   'Spicy chicken',
@@ -53,7 +58,23 @@ function BackgroundGlow() {
 }
 
 function App() {
-  const store = useFoodyStore()
+  const auth = useAuth()
+
+  if (auth.status === 'loading') {
+    return (
+      <div className="flex h-full flex-col items-center justify-center bg-surface">
+        <span className="h-8 w-8 rounded-full border-2 border-ink/20 border-t-ink/70 [animation:spin_0.8s_linear_infinite]" />
+      </div>
+    )
+  }
+
+  // Guests (not signed in) still get the full app with ephemeral session data.
+  return <AppShell key={auth.user?.id ?? 'guest'} auth={auth} />
+}
+
+function AppShell({ auth }: { auth: Auth }) {
+  const user = auth.user
+  const store = useFoodyStore(Boolean(user))
 
   const [phase, setPhase] = useState<Phase>('idle')
   const [tab, setTab] = useState<Tab>('home')
@@ -66,14 +87,22 @@ function App() {
   const [profileBusy, setProfileBusy] = useState(false)
   const [profileError, setProfileError] = useState<string | null>(null)
   const [profileQuery, setProfileQuery] = useState('')
+  const [authOpen, setAuthOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [fridgeOpen, setFridgeOpen] = useState(false)
+  const [fridgeBusy, setFridgeBusy] = useState(false)
+  const [fridgeError, setFridgeError] = useState<string | null>(null)
 
   const busyRef = useRef(false)
   const profileBusyRef = useRef(false)
+  const fridgeBusyRef = useRef(false)
   const submitRef = useRef<(raw: string) => Promise<void>>(async () => {})
   const profileSubmitRef = useRef<(raw: string) => Promise<void>>(async () => {})
+  const fridgeSubmitRef = useRef<(raw: string) => Promise<void>>(async () => {})
   const voice = useVoice({
     onFinal: (transcript) => {
       if (tabRef.current === 'me') void profileSubmitRef.current(transcript)
+      else if (tabRef.current === 'fridge') void fridgeSubmitRef.current(transcript)
       else void submitRef.current(transcript)
     },
   })
@@ -90,9 +119,16 @@ function App() {
       setQuery(trimmed)
 
       try {
-        const intent = await parseIntent(trimmed, store.prefs)
-        const result = await generateRecipe(intent, store.prefs)
-        result.image = result.image || foodImageFallback(intent.searchTerm)
+        const intent = await parseIntent(
+          trimmed,
+          store.prefs,
+          store.fridgeMode && store.fridge.length > 0 ? store.fridge : undefined,
+        )
+        const result = await generateRecipe(
+          intent,
+          store.prefs,
+          store.fridgeMode && store.fridge.length > 0 ? store.fridge : undefined,
+        )
 
         if (!result.steps.length || !result.ingredients.length) {
           throw new Error('That dish came back incomplete. Try rephrasing it.')
@@ -137,6 +173,45 @@ function App() {
   )
 
   profileSubmitRef.current = runProfileUpdate
+
+  const runFridgeUpdate = useCallback(
+    async (raw: string) => {
+      const trimmed = raw.trim()
+      if (!trimmed || fridgeBusyRef.current) return
+      fridgeBusyRef.current = true
+      setFridgeBusy(true)
+      setFridgeError(null)
+      try {
+        const updated = await updateFridge(trimmed, store.fridge)
+        store.setFridge(updated)
+        setFridgeOpen(false)
+      } catch (err) {
+        setFridgeError(err instanceof Error ? err.message : 'Could not update your fridge')
+      } finally {
+        fridgeBusyRef.current = false
+        setFridgeBusy(false)
+      }
+    },
+    [store],
+  )
+
+  fridgeSubmitRef.current = runFridgeUpdate
+
+  const onFridgeMicPress = useCallback(() => {
+    if (fridgeBusy || !voice.supported) return
+    if (voice.isListening) {
+      voice.stop()
+      return
+    }
+    setFridgeError(null)
+    voice.start()
+  }, [fridgeBusy, voice])
+
+  const closeFridge = useCallback(() => {
+    if (voice.isListening) voice.stop()
+    setFridgeOpen(false)
+    setFridgeError(null)
+  }, [voice])
 
   const onProfileMicPress = useCallback(() => {
     if (phase === 'thinking' || !voice.supported) return
@@ -189,37 +264,49 @@ function App() {
           isSaved={store.isSaved(recipe.id)}
           onBack={closeRecipe}
           onToggleSave={() => store.toggleSaved(recipe)}
+          onImageUploaded={(updated) => {
+            store.updateRecipeImage(updated.id, updated.image)
+            setRecipe(updated)
+          }}
         />
       ) : (
         <main className="relative z-10 mx-auto flex h-full max-w-md flex-col px-5 pb-32 pt-[max(env(safe-area-inset-top),22px)]">
           <header className="flex items-center justify-between">
-            <span className="text-lg font-bold tracking-tight">Foody</span>
-            <span className="glass-badge inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-medium text-ink-soft">
-              <Sparkles className="h-3.5 w-3.5" />
-              {voice.supported ? 'Voice ready' : 'Type to ask'}
-            </span>
+            <span className="text-lg font-bold tracking-tight">Foody AI</span>
+            <ProfileMenu
+              user={user}
+              onOpenSettings={() => setSettingsOpen(true)}
+              onOpenHistory={() => setTab('history')}
+              onOpenAuth={() => setAuthOpen(true)}
+              onLogout={() => void auth.logout()}
+            />
           </header>
 
           <div className="mt-6 flex-1 overflow-y-auto no-scrollbar">
             {tab === 'home' && (
-              <HomeView
-                phase={phase}
-                voiceSupported={voice.supported}
-                listening={phase === 'listening'}
-                text={text}
-                displayTranscript={voice.transcript || text}
-                error={error}
-                query={query}
-                examples={examples}
-                onTextChange={setText}
-                onSubmit={submitTyped}
-                onMicPress={onMicPress}
-                onRetry={() => void runFlow(query)}
-              />
+              <>
+                {!user && <GuestBanner onSignIn={() => setAuthOpen(true)} />}
+                <HomeView
+                  phase={phase}
+                  voiceSupported={voice.supported}
+                  listening={phase === 'listening'}
+                  text={text}
+                  displayTranscript={voice.transcript || text}
+                  error={error}
+                  query={query}
+                  examples={examples}
+                  onTextChange={setText}
+                  onSubmit={submitTyped}
+                  onMicPress={onMicPress}
+                  onRetry={() => void runFlow(query)}
+                />
+              </>
             )}
 
             {tab === 'me' && (
               <ProfileView
+                username={user?.username ?? 'Guest'}
+                avatar={user?.avatar ?? null}
                 likes={store.prefs.likes}
                 dislikes={store.prefs.dislikes}
                 lastSpeech={store.prefs.lastSpeech}
@@ -231,6 +318,19 @@ function App() {
                 onMicPress={onProfileMicPress}
                 onRetry={() => void runProfileUpdate(profileQuery)}
                 onRemove={(list, item) => store.removePreference(list, item)}
+              />
+            )}
+
+            {tab === 'fridge' && (
+              <FridgeView
+                items={store.fridge}
+                fridgeMode={store.fridgeMode}
+                onToggleFridgeMode={store.setFridgeMode}
+                onChange={store.setFridge}
+                onOpenAdd={() => {
+                  setFridgeOpen(true)
+                  setFridgeError(null)
+                }}
               />
             )}
 
@@ -259,7 +359,39 @@ function App() {
         </main>
       )}
 
-      <TabBar active={tab} onSelect={(t) => setTab(t)} hidden={phase === 'recipe'} />
+      <TabBar active={tab} onSelect={(t) => setTab(t)} hidden={phase === 'recipe' || authOpen || settingsOpen || fridgeOpen} />
+
+      {fridgeOpen && (
+        <FridgeAddModal
+          voiceSupported={voice.supported}
+          listening={voice.isListening}
+          transcript={voice.transcript}
+          busy={fridgeBusy}
+          error={fridgeError}
+          onMicPress={onFridgeMicPress}
+          onClose={closeFridge}
+        />
+      )}
+
+      {authOpen && (
+        <AuthScreen
+          onClose={() => setAuthOpen(false)}
+          onLogin={async (u, p) => auth.login(u, p)}
+          onRegister={async (u, p, q, a) => auth.register(u, p, q, a)}
+        />
+      )}
+
+      {settingsOpen && user && (
+        <ProfileSettings
+          username={user.username}
+          avatar={user.avatar}
+          onClose={() => setSettingsOpen(false)}
+          onUpdateProfile={auth.updateProfile}
+          onUpdateAvatar={auth.updateAvatar}
+          onDeleteAccount={auth.deleteAccount}
+          onAccountDeleted={() => setSettingsOpen(false)}
+        />
+      )}
     </div>
   )
 }
@@ -349,7 +481,7 @@ function HomeView(props: {
             What are you <span className="italic text-ink/40">craving</span>?
           </h1>
           <p className="mx-auto mt-3 max-w-xs text-[15px] leading-relaxed text-ink-soft">
-            Say it out loud, or type it. Foody turns your words into a recipe.
+            Say it out loud, or type it. Foody AI turns your words into a recipe.
           </p>
         </div>
       )}
@@ -460,6 +592,24 @@ function ThinkingView({ query }: { query: string }) {
         Researching the best recipes to cure your hunger
       </div>
     </div>
+  )
+}
+
+function GuestBanner({ onSignIn }: { onSignIn: () => void }) {
+  return (
+    <GlassCard className="mb-4 flex items-center gap-3 px-4 py-3">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <p className="text-[13px] font-semibold leading-snug">You’re not signed in</p>
+        <p className="text-[12px] leading-snug text-ink-soft">You can explore, but nothing will be saved.</p>
+      </div>
+      <button
+        type="button"
+        onClick={onSignIn}
+        className="pressable inline-flex shrink-0 items-center gap-1.5 rounded-full bg-ink px-4 py-2 text-[13px] font-semibold text-white"
+      >
+        Sign in
+      </button>
+    </GlassCard>
   )
 }
 

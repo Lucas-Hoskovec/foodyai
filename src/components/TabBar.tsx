@@ -1,4 +1,4 @@
-import { Bookmark, Clock, House, Sparkles, type LucideIcon } from 'lucide-react'
+import { Bookmark, House, Refrigerator, Sparkles, type LucideIcon } from 'lucide-react'
 import type { Tab } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
@@ -10,8 +10,8 @@ interface TabBarProps {
 
 const TABS: Array<{ key: Tab; label: string; icon: LucideIcon }> = [
   { key: 'home', label: 'Home', icon: House },
-  { key: 'me', label: 'My FoodyAI', icon: Sparkles },
-  { key: 'history', label: 'History', icon: Clock },
+  { key: 'me', label: 'About me', icon: Sparkles },
+  { key: 'fridge', label: 'My Fridge', icon: Refrigerator },
   { key: 'saved', label: 'Saved', icon: Bookmark },
 ]
 
@@ -24,7 +24,7 @@ export function TabBar({ active, onSelect, hidden }: TabBarProps) {
         hidden && 'pointer-events-none opacity-0',
       )}
     >
-      <div className="glass-strong pointer-events-auto flex max-w-[calc(100vw-48px)] items-center gap-1 overflow-x-auto no-scrollbar rounded-full p-1.5 shadow-[var(--shadow-glass)]">
+      <div className="glass-strong pointer-events-auto flex max-w-[calc(100vw-32px)] items-center gap-0.5 overflow-x-auto no-scrollbar rounded-full p-1.5 shadow-[var(--shadow-glass)]">
         {TABS.map((tab) => {
           const Icon = tab.icon
           const isActive = active === tab.key
@@ -35,7 +35,7 @@ export function TabBar({ active, onSelect, hidden }: TabBarProps) {
               onClick={() => onSelect(tab.key)}
               aria-current={isActive ? 'page' : undefined}
               className={cn(
-                'pressable flex min-h-[48px] shrink-0 items-center justify-center gap-1.5 rounded-full px-3 text-[12px] font-medium whitespace-nowrap',
+                'pressable flex min-h-[46px] shrink-0 items-center justify-center gap-1 rounded-full px-2 text-[11px] font-medium whitespace-nowrap',
                 isActive
                   ? 'bg-white/90 text-ink shadow-[0_2px_12px_rgba(0,0,0,0.1)]'
                   : 'text-ink-soft',

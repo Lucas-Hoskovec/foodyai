@@ -90,16 +90,6 @@
   }
 }
 
-@keyframes waveform {
-  0%,
-  100% {
-    transform: scaleY(0.3);
-  }
-  50% {
-    transform: scaleY(1);
-  }
-}
-
 @keyframes drift {
   0%,
   100% {
@@ -143,6 +133,7 @@
 @layer base {
   html {
     height: 100%;
+    background: var(--color-surface);
   }
   body {
     height: 100%;
@@ -165,6 +156,26 @@
   }
   ::selection {
     background: rgba(0, 0, 0, 0.12);
+  }
+  .input {
+    height: 3rem;
+    width: 100%;
+    border-radius: 0.75rem;
+    border: 1px solid rgba(0, 0, 0, 0.05);
+    background: rgba(0, 0, 0, 0.03);
+    padding: 0 1rem;
+    font-size: 0.9375rem;
+    color: var(--color-ink);
+    outline: none;
+  }
+  .input::placeholder {
+    color: var(--color-ink-faint);
+  }
+  .input:focus {
+    border-color: rgba(0, 0, 0, 0.2);
+  }
+  select.input {
+    appearance: none;
   }
 }
 

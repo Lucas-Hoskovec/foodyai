@@ -4,15 +4,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
-// GitHub Pages serves a project site under /<repo>/. In GitHub Actions the
-// GITHUB_REPOSITORY env var is "<owner>/<repo>", so derive the base from it.
-// Locally (no GITHUB_REPOSITORY) we serve from the root.
-const base =
-  process.env.VITE_BASE ??
-  (process.env.GITHUB_REPOSITORY ? `/${process.env.GITHUB_REPOSITORY.split('/')[1]}/` : '/')
-
 export default defineConfig({
-  base,
   plugins: [
     react(),
     tailwindcss(),
@@ -20,15 +12,14 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['icon-192.png', 'icon-512.png', 'favicon.svg'],
       manifest: {
-        name: 'Foody',
-        short_name: 'Foody',
+        name: 'Foody AI',
+        short_name: 'Foody AI',
         description: 'Talk, and get a recipe. Say what you are craving.',
         theme_color: '#f5f5f7',
         background_color: '#f5f5f7',
         display: 'standalone',
         orientation: 'portrait',
-        start_url: base,
-        scope: base,
+        start_url: '/',
         icons: [
           { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
@@ -45,10 +36,13 @@ export default defineConfig({
   server: {
     host: true,
     proxy: {
-      '/api/nim': {
-        target: 'https://integrate.api.nvidia.com',
+      '/api': {
+        target: 'http://localhost:3001',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/nim/, '/v1'),
+      },
+      '/uploads': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
       },
     },
   },

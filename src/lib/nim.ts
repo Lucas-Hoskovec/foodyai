@@ -1,4 +1,4 @@
-import type { Intent, Preferences, Recipe } from './types'
+import type { FridgeItem, Intent, Preferences, Recipe } from './types'
 import { nowId, sleep } from './utils'
 
 const BASE_URL = import.meta.env.VITE_NIM_BASE_URL ?? '/api/nim'
@@ -71,7 +71,6 @@ async function chatCompletion(
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${import.meta.env.VITE_NIM_API_KEY ?? 'n/a'}`,
         },
         body: JSON.stringify({
           model: NIM_MODEL,
@@ -108,7 +107,7 @@ async function chatCompletion(
   }
 }
 
-const PARSE_SYSTEM = `You are Foody, an intent parser inside a voice cooking app.
+const PARSE_SYSTEM = `You are Foody AI, an intent parser inside a voice cooking app.
 Convert the user's spoken craving into ONE dish and search details. Be specific but concise.
 
 Respond with ONLY a JSON object, no markdown, matching exactly:
@@ -118,13 +117,15 @@ Respond with ONLY a JSON object, no markdown, matching exactly:
   "dietary": ["dietary notes like vegetarian, vegan, dairy-free, gluten-free, keto"],
   "time": "short prep time if mentioned, e.g. '30 min', otherwise null",
   "keywords": ["3 to 5 ingredient or flavor keywords for photo/recipe search"],
-  "searchTerm": "a short 2-4 word search phrase for a recipe database, e.g. 'tuscan chicken'"
+  "searchTerm": "a short 2-4 word search phrase for a recipe database, e.g. 'tuscan chicken'",
+  "imageKeywords": ["3 to 4 short, highly-visual, photo-search-friendly terms for finding a photo of this exact dish, e.g. 'grilled salmon','roasted asparagus','lemon butter']"
 }
 
 Rules:
 - If they describe ingredients ("chicken and lemon"), pick a classic dish using them.
 - If they describe a craving ("something spicy"), pick a popular dish that satisfies it.
 - searchTerm must be simple English words, no quotes.
+- imageKeywords must be short specific photo terms (about the plated dish + ingredients), NOT generic words like "food", "recipe", "delicious".
 - dietary must be an array (empty if none).
 - Do ALL of your thinking silently. Reply with ONLY the JSON object — start with { and end with }. No markdown, no labels, no explanation.`
 
@@ -138,13 +139,23 @@ function safeString(value: unknown): string | undefined {
 }
 
 /** Parse a raw craving into a structured intent. */
-export async function parseIntent(transcript: string, prefs?: Preferences): Promise<Intent> {
+export async function parseIntent(
+  transcript: string,
+  prefs?: Preferences,
+  fridge?: FridgeItem[],
+): Promise<Intent> {
   const taste = prefs?.likes.length || prefs?.dislikes.length ? tasteBlock(prefs) : ''
+  const fridgeBlock = fridge?.length
+    ? `\n\nIMPORTANT — fridge cooking is ON. The user's available ingredients are:
+${fridge.map((item) => `- ${item.amount ? `${item.amount} ` : ''}${item.name}`).join('\n')}
+
+Choose the dish based on THESE ingredients first: pick the best dish that can be made almost entirely from what's on the list (thinking of the amounts, e.g. you can't fry a whole chicken with 200 g of it). Weigh the user's spoken craving second. If they name a dish that can't be made from the list, pick the best realistic alternative that CAN.`
+    : ''
   const content = await limiter.schedule(() =>
     chatCompletion(
       [
         { role: 'system', content: PARSE_SYSTEM + taste },
-        { role: 'user', content: transcript },
+        { role: 'user', content: transcript + fridgeBlock },
       ],
       0.2,
       1800,
@@ -158,12 +169,14 @@ export async function parseIntent(transcript: string, prefs?: Preferences): Prom
     time?: unknown
     keywords?: unknown
     searchTerm?: unknown
+    imageKeywords?: unknown
   }
 
   const dish = safeString(raw.dish)
   if (!dish) throw new Error('Could not parse intent')
 
   const keywords = safeArray(raw.keywords)
+  const imageKeywords = safeArray(raw.imageKeywords).slice(0, 4)
   const searchTerm =
     safeString(raw.searchTerm) ??
     keywords.slice(0, 3).join(' ') ??
@@ -176,6 +189,7 @@ export async function parseIntent(transcript: string, prefs?: Preferences): Prom
     time: safeString(raw.time),
     keywords,
     searchTerm,
+    imageKeywords,
   }
 }
 
@@ -190,7 +204,7 @@ Personal taste profile (treat as guidance):
 - Dislikes (steer clear of these): ${dislikes}`
 }
 
-const RECIPE_SYSTEM = `You are Foody, an elite chef writing a genuinely cookable, delicious recipe from scratch.
+const RECIPE_SYSTEM = `You are Foody AI, an elite chef writing a genuinely cookable, delicious recipe from scratch.
 
 Think about flavor first, then technique, then structure:
 - Choose the cooking method that fits the dish (sear, braise, roast, simmer, steam, stir-fry...).
@@ -258,7 +272,12 @@ function buildRecipe(raw: RecipeRaw, intent: Intent & { dish: string }): Recipe 
   }
 }
 
-function intentPrompt(intent: Intent, prefs?: Preferences): string {
+function intentPrompt(intent: Intent, prefs?: Preferences, fridge?: FridgeItem[]): string {
+  const fridgeBlock = fridge?.length
+    ? `Fridge stock — this is ALL the user has, so the recipe MUST be built entirely from these ingredients and nothing else:\n${fridge
+        .map((item) => `- ${item.amount ? `${item.amount} ` : ''}${item.name}`)
+        .join('\n')}`
+    : null
   return [
     `Dish: ${intent.dish}`,
     intent.cuisine ? `Cuisine: ${intent.cuisine}` : null,
@@ -270,14 +289,21 @@ function intentPrompt(intent: Intent, prefs?: Preferences): string {
     prefs?.likes.length || prefs?.dislikes.length
       ? 'Taste rule: build the recipe around what the user likes, and never include an ingredient from the dislikes list.'
       : null,
+    fridgeBlock
+      ? `${fridgeBlock}\nStrict fridge rule: choose only the ingredients from the fridge list that actually fit the dish, and use ONLY those — do NOT use every fridge item. Every ingredient in the recipe MUST come from the fridge list above (or water/salt/black pepper). Do not add any ingredient that is not in the fridge and not salt/water/pepper.`
+      : null,
   ]
     .filter(Boolean)
     .join('\n')
 }
 
 /** Write a full structured recipe in a single pass (fast). */
-export async function generateRecipe(intent: Intent, prefs?: Preferences): Promise<Recipe> {
-  const prompt = intentPrompt(intent, prefs)
+export async function generateRecipe(
+  intent: Intent,
+  prefs?: Preferences,
+  fridge?: FridgeItem[],
+): Promise<Recipe> {
+  const prompt = intentPrompt(intent, prefs, fridge)
 
   const content = await limiter.schedule(() =>
     chatCompletion(
@@ -294,12 +320,7 @@ export async function generateRecipe(intent: Intent, prefs?: Preferences): Promi
   return buildRecipe(JSON.parse(extractJson(content)), intent)
 }
 
-/** Full pipeline: intent -> recipe. */
-export function parseTranscript(transcript: string) {
-  return parseIntent(transcript)
-}
-
-const PREFS_SYSTEM = `You are Foody, a personal taste assistant for a cooking app.
+const PREFS_SYSTEM = `You are Foody AI, a personal taste assistant for a cooking app.
 A user is telling you, out loud or in text, what they like and dislike to eat.
 You are given their CURRENT stored lists and their new spoken statement.
 
@@ -344,3 +365,90 @@ export async function updatePreferences(transcript: string, current: Preferences
 }
 
 export { limiter }
+
+// ---- Fridge inventory ----
+
+/** Canonical categories the model may assign a fridge item to. */
+export const FRIDGE_CATEGORIES = [
+  'Vegetables',
+  'Fruit',
+  'Meat',
+  'Dairy & Eggs',
+  'Seafood',
+  'Grains & Bread',
+  'Herbs & Spices',
+  'Condiments & Sauces',
+  'Beverages',
+  'Frozen',
+  'Snacks',
+  'Other',
+]
+
+const FRIDGE_SYSTEM = `You are Foody AI, managing the user's home fridge inventory in a cooking app.
+A user tells you, out loud or in text, what groceries they have in their fridge/pantry right now.
+You are given their CURRENT stored fridge items and their new spoken statement.
+
+Update the inventory:
+- Add any new grocery items they mention, with a short, human-friendly amount (e.g. "1", "500 g", "half a carton", "a pinch").
+- If they mention an amount for an item you already have, update that item's amount.
+- If they say they used up / finished / ate / ran out of something ("I finished the milk", "no more eggs"), REMOVE that item.
+- Ignore anything that is not a food item (instructions, small talk, recipe requests).
+- Assign every item to exactly one category from this allowed list: ${FRIDGE_CATEGORIES.join(', ')}.
+- De-duplicate by name; keep names short and singular (e.g. "chicken breast", "cheddar cheese").
+
+Respond with ONLY a JSON object, no markdown, matching exactly:
+{
+  "items": [
+    {"name": "item name", "amount": "short amount", "category": "one allowed category"},
+    "..."
+  ]
+}
+The items array must contain the ENTIRE updated fridge (existing items plus any changes), not just the new ones.`
+
+const FRIDGE_MAX_ITEMS = 60
+
+/** Update the user's fridge inventory from a spoken/text statement. */
+export async function updateFridge(transcript: string, current: FridgeItem[]): Promise<FridgeItem[]> {
+  const content = await limiter.schedule(() => {
+    const lines = current.length
+      ? current.map((item) => `${item.amount ? `${item.amount} ` : ''}${item.name}`).join('; ')
+      : '(empty)'
+    return chatCompletion(
+      [
+        { role: 'system', content: FRIDGE_SYSTEM },
+        {
+          role: 'user',
+          content: `Current fridge: ${lines}\n\nWhat the user said: ${transcript}`,
+        },
+      ],
+      0.2,
+      1500,
+      true,
+    )
+  })
+
+  const raw = JSON.parse(extractJson(content)) as { items?: unknown }
+  const rawItems = Array.isArray(raw.items) ? raw.items : []
+  const seen = new Set<string>()
+  const items: FridgeItem[] = []
+
+  for (const entry of rawItems) {
+    const item = entry as { name?: unknown; amount?: unknown; category?: unknown }
+    const name = safeString(item.name)?.toLowerCase()
+    if (!name) continue
+    const key = name.split(' ').slice(0, 4).join(' ')
+    if (seen.has(key)) continue
+    seen.add(key)
+    const category = safeString(item.category)
+    items.push({
+      name,
+      amount: safeString(item.amount) ?? '',
+      category: category && FRIDGE_CATEGORIES.includes(category as (typeof FRIDGE_CATEGORIES)[number])
+        ? category
+        : 'Other',
+    })
+    if (items.length >= FRIDGE_MAX_ITEMS) break
+  }
+
+  return items
+}

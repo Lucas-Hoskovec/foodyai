@@ -1,6 +1,6 @@
 export type Phase = 'idle' | 'listening' | 'thinking' | 'recipe'
 
-export type Tab = 'home' | 'me' | 'history' | 'saved'
+export type Tab = 'home' | 'me' | 'fridge' | 'history' | 'saved'
 
 export interface Preferences {
   likes: string[]
@@ -15,11 +15,18 @@ export interface Intent {
   time?: string
   keywords: string[]
   searchTerm: string
+  imageKeywords: string[]
 }
 
 export interface Ingredient {
   name: string
   measure: string
+}
+
+export interface FridgeItem {
+  name: string
+  amount: string
+  category: string
 }
 
 export interface Recipe {
