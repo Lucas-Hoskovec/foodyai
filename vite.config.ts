@@ -39,6 +39,11 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:3001',
         changeOrigin: true,
+        // A fresh connection per request avoids the proxy resending keep-alive
+        // sockets that NVIDIA resets during long (8–40s) vision/reasoning calls.
+        agent: false,
+        timeout: 200000,
+        proxyTimeout: 200000,
       },
       '/uploads': {
         target: 'http://localhost:3001',

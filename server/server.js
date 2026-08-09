@@ -151,32 +151,45 @@ app.use(ah(loadUser))
 
 /** Forward a chat-completions request to NVIDIA Nim with the key injected. */
 app.post('/api/nim/chat/completions', async (req, res) => {
-  const { model, temperature, max_tokens, messages, response_format } = req.body ?? {}
+  const { model, temperature, top_p, top_k, max_tokens, messages, response_format, thinking_token_budget, chat_template_kwargs } =
+    req.body ?? {}
   if (!Array.isArray(messages)) {
     res.status(400).json({ error: 'messages is required' })
     return
   }
   try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 200_000)
     const nimRes = await fetch(`${NIM_BASE}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${NIM_KEY}`,
       },
+      signal: controller.signal,
       body: JSON.stringify({
         model: model ?? NIM_MODEL,
         temperature,
+        ...(top_p != null ? { top_p } : {}),
+        ...(top_k != null ? { top_k } : {}),
         max_tokens,
         messages,
         ...(response_format ? { response_format } : {}),
+        ...(thinking_token_budget != null ? { thinking_token_budget } : {}),
+        ...(chat_template_kwargs ? { chat_template_kwargs } : {}),
       }),
     })
+    clearTimeout(timer)
     const data = await nimRes.text()
     res
       .status(nimRes.status)
       .set('Content-Type', 'application/json')
       .send(data)
   } catch (err) {
+    if (err?.name === 'AbortError') {
+      res.status(504).json({ error: 'Upstream timed out after 200s' })
+      return
+    }
     res.status(502).json({ error: err instanceof Error ? err.message : 'proxy error' })
   }
 })

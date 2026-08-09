@@ -1,15 +1,12 @@
 import { useState } from 'react'
-import { Check, Pencil, Plus, Refrigerator, Sparkles, Trash2, X } from 'lucide-react'
+import { Check, Pencil, Plus, Refrigerator, Trash2, X } from 'lucide-react'
 import type { FridgeItem } from '@/lib/types'
 import { FRIDGE_CATEGORIES } from '@/lib/nim'
 import { EmptyState } from '@/components/EmptyState'
 import { GlassCard } from '@/components/GlassCard'
-import { cn } from '@/lib/utils'
 
 interface FridgeViewProps {
   items: FridgeItem[]
-  fridgeMode: boolean
-  onToggleFridgeMode: (on: boolean) => void
   onOpenAdd: () => void
   onChange: (next: FridgeItem[]) => void
 }
@@ -18,7 +15,7 @@ function capitalize(text: string): string {
   return text.length ? text.charAt(0).toUpperCase() + text.slice(1) : text
 }
 
-export function FridgeView({ items, fridgeMode, onToggleFridgeMode, onOpenAdd, onChange }: FridgeViewProps) {
+export function FridgeView({ items, onOpenAdd, onChange }: FridgeViewProps) {
   const [editing, setEditing] = useState<FridgeItem | null>(null)
   const groups = FRIDGE_CATEGORIES.map((category) => ({
     category,
@@ -38,21 +35,6 @@ export function FridgeView({ items, fridgeMode, onToggleFridgeMode, onOpenAdd, o
           <Refrigerator className="h-6 w-6 text-ink" strokeWidth={1.8} />
         </div>
       </header>
-
-      <GlassCard className="mt-4 flex items-center gap-3 px-4 py-3">
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ink/[0.06]">
-          <Sparkles className="h-4 w-4 text-ink" strokeWidth={1.8} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-[14px] font-semibold leading-snug">Cook from my fridge</p>
-          <p className="text-[12px] leading-snug text-ink-soft">
-            {fridgeMode
-              ? 'Recipes will be built around what you have inside.'
-              : 'Recipes will be made up freely, ignoring the fridge.'}
-          </p>
-        </div>
-        <Switch on={fridgeMode} onChange={onToggleFridgeMode} label="Use fridge ingredients" />
-      </GlassCard>
 
       {groups.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center pb-16">
@@ -210,36 +192,5 @@ function EditModal({
         </div>
       </div>
     </div>
-  )
-}
-
-function Switch({
-  on,
-  onChange,
-  label,
-}: {
-  on: boolean
-  onChange: (next: boolean) => void
-  label: string
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      aria-label={label}
-      onClick={() => onChange(!on)}
-      className={cn(
-        'pressable relative h-7 w-12 shrink-0 rounded-full transition-colors',
-        on ? 'bg-ink' : 'bg-ink/15',
-      )}
-    >
-      <span
-        className={cn(
-          'absolute left-0.5 top-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform duration-200',
-          on && 'translate-x-5',
-        )}
-      />
-    </button>
   )
 }

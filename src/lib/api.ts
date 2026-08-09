@@ -1,4 +1,5 @@
 import type { FridgeItem, Preferences, Recipe } from './types'
+import { compressImageFile } from './image'
 
 export interface DataPayload {
   history: Recipe[]
@@ -104,8 +105,9 @@ export const api = {
 
   /** Upload a profile picture; resolves to the resulting URL path. */
   async uploadAvatar(file: File): Promise<string> {
+    const compressed = await compressImageFile(file, { maxEdge: 384 })
     const form = new FormData()
-    form.append('image', file)
+    form.append('image', compressed, compressed.name)
     const body = (await request('/api/auth/avatar', { method: 'POST', body: form })) as { avatar?: string }
     if (typeof body.avatar !== 'string') throw new Error('Upload failed')
     return body.avatar
@@ -146,8 +148,9 @@ export const api = {
 
   /** Upload a recipe photo; resolves to the resulting URL path. */
   async uploadRecipeImage(id: string, file: File): Promise<string> {
+    const compressed = await compressImageFile(file, { maxEdge: 1080 })
     const form = new FormData()
-    form.append('image', file)
+    form.append('image', compressed, compressed.name)
     const body = (await request(`/api/recipes/${encodeURIComponent(id)}/image`, {
       method: 'POST',
       body: form,

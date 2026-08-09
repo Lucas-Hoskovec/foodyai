@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef } from 'react'
 import { Camera, Mic as MicIcon, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -9,6 +9,7 @@ interface FridgeAddModalProps {
   busy: boolean
   error: string | null
   onMicPress: () => void
+  onPhoto: (file: File) => void
   onClose: () => void
 }
 
@@ -19,9 +20,10 @@ export function FridgeAddModal({
   busy,
   error,
   onMicPress,
+  onPhoto,
   onClose,
 }: FridgeAddModalProps) {
-  const [cameraSoon, setCameraSoon] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   return (
     <div
@@ -46,9 +48,9 @@ export function FridgeAddModal({
           <X className="h-4 w-4" />
         </button>
 
-        <h2 className="text-[19px] font-bold">What's in your fridge?</h2>
+        <h2 className="text-[19px] font-bold">Add groceries</h2>
         <p className="mx-auto mt-1 max-w-[240px] text-[13px] leading-snug text-ink-soft">
-          Speak the groceries and amounts, or snap a photo — Foody AI will sort them.
+          Speak the groceries and amounts, or snap a photo of your receipt — Foody AI will sort them.
         </p>
 
         <div className="mt-6 flex items-center justify-center gap-8">
@@ -63,15 +65,22 @@ export function FridgeAddModal({
             icon={<Camera className="h-6 w-6" strokeWidth={2} />}
             label="Camera"
             disabled={busy}
-            onClick={() => setCameraSoon(true)}
+            onClick={() => fileRef.current?.click()}
           />
         </div>
 
-        {cameraSoon && (
-          <p className="mt-4 text-[12px] text-ink-soft">
-            Photo mode is coming soon — for now, use your voice to list groceries.
-          </p>
-        )}
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            e.target.value = ''
+            if (file) onPhoto(file)
+          }}
+        />
 
         {listening && (
           <p aria-live="polite" className="mt-4 text-[13px] italic text-ink">

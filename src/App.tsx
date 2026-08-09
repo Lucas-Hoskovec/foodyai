@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 import { Bookmark, Clock, Mic as MicIcon, RotateCcw, Send, Sparkles, Trash2 } from 'lucide-react'
-import type { Phase, Recipe, Tab } from '@/lib/types'
+import type { FridgeItem, Phase, Recipe, Tab } from '@/lib/types'
 import { useVoice } from '@/lib/voice'
 import { parseIntent, generateRecipe, updatePreferences, updateFridge } from '@/lib/nim'
 import { useFoodyStore } from '@/lib/store'
@@ -17,6 +17,8 @@ import { ProfileMenu } from '@/components/ProfileMenu'
 import { ProfileSettings } from '@/components/ProfileSettings'
 import { FridgeView } from '@/components/FridgeView'
 import { FridgeAddModal } from '@/components/FridgeAddModal'
+import { FridgePhotoScanner } from '@/components/FridgePhotoScanner'
+import { Switch } from '@/components/Switch'
 
 const EXAMPLE_POOL = [
   'Spicy chicken',
@@ -93,6 +95,8 @@ function AppShell({ auth }: { auth: Auth }) {
   const [fridgeOpen, setFridgeOpen] = useState(false)
   const [fridgeBusy, setFridgeBusy] = useState(false)
   const [fridgeError, setFridgeError] = useState<string | null>(null)
+  const [scanOpen, setScanOpen] = useState(false)
+  const [scanFile, setScanFile] = useState<File | null>(null)
 
   const busyRef = useRef(false)
   const profileBusyRef = useRef(false)
@@ -214,6 +218,33 @@ function AppShell({ auth }: { auth: Auth }) {
     setFridgeError(null)
   }, [voice])
 
+  const openPhotoScanner = useCallback((file: File) => {
+    if (voice.isListening) voice.stop()
+    setFridgeOpen(false)
+    setFridgeError(null)
+    setScanFile(file)
+    setScanOpen(true)
+  }, [voice])
+
+  const saveScannedItems = useCallback(
+    (scanned: FridgeItem[]) => {
+      const existing = store.fridge
+      const byName = new Map(existing.map((item) => [item.name.toLowerCase(), item]))
+      for (const item of scanned) {
+        byName.set(item.name.toLowerCase(), item)
+      }
+      store.setFridge([...byName.values()].slice(0, 60))
+      setScanOpen(false)
+      setScanFile(null)
+    },
+    [store],
+  )
+
+  const closeScan = useCallback(() => {
+    setScanOpen(false)
+    setScanFile(null)
+  }, [])
+
   const onProfileMicPress = useCallback(() => {
     if (phase === 'thinking' || !voice.supported) return
     if (voice.isListening) {
@@ -298,6 +329,8 @@ function AppShell({ auth }: { auth: Auth }) {
                   error={error}
                   query={query}
                   examples={examples}
+                  fridgeMode={store.fridgeMode}
+                  onToggleFridgeMode={store.setFridgeMode}
                   onTextChange={setText}
                   onSubmit={submitTyped}
                   onMicPress={onMicPress}
@@ -324,16 +357,14 @@ function AppShell({ auth }: { auth: Auth }) {
               />
             )}
 
-            {tab === 'fridge' && (
+{tab === 'fridge' && (
               <FridgeView
                 items={store.fridge}
-                fridgeMode={store.fridgeMode}
-                onToggleFridgeMode={store.setFridgeMode}
-                onChange={store.setFridge}
                 onOpenAdd={() => {
                   setFridgeOpen(true)
                   setFridgeError(null)
                 }}
+                onChange={store.setFridge}
               />
             )}
 
@@ -351,7 +382,7 @@ function AppShell({ auth }: { auth: Auth }) {
         </main>
       )}
 
-      <TabBar active={tab} onSelect={(t) => setTab(t)} hidden={phase === 'recipe' || authOpen || settingsOpen || fridgeOpen} />
+      <TabBar active={tab} onSelect={(t) => setTab(t)} hidden={phase === 'recipe' || authOpen || settingsOpen || fridgeOpen || scanOpen} />
 
       {fridgeOpen && (
         <FridgeAddModal
@@ -361,8 +392,13 @@ function AppShell({ auth }: { auth: Auth }) {
           busy={fridgeBusy}
           error={fridgeError}
           onMicPress={onFridgeMicPress}
+          onPhoto={openPhotoScanner}
           onClose={closeFridge}
         />
+      )}
+
+      {scanOpen && scanFile && (
+        <FridgePhotoScanner file={scanFile} onClose={closeScan} onSave={saveScannedItems} />
       )}
 
       {authOpen && (
@@ -529,6 +565,8 @@ function HomeView(props: {
   error: string | null
   query: string
   examples: string[]
+  fridgeMode: boolean
+  onToggleFridgeMode: (on: boolean) => void
   onTextChange: (v: string) => void
   onSubmit: () => void
   onMicPress: () => void
@@ -610,6 +648,11 @@ function HomeView(props: {
                 >
                   <Send className="h-4 w-4" />
                 </button>
+              </div>
+
+              <div className="flex items-center justify-between pl-4 pr-3 py-2.5">
+                <p className="text-[11px] font-semibold text-ink/70">Cook with my fridge's ingredients</p>
+                <Switch on={props.fridgeMode} onChange={props.onToggleFridgeMode} label="Use fridge ingredients" />
               </div>
 
           </GlassCard>
