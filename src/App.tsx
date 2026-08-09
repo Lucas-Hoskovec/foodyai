@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react'
-import { Clock, Mic as MicIcon, RotateCcw, Send, Sparkles, Trash2 } from 'lucide-react'
+import { Bookmark, Clock, Mic as MicIcon, RotateCcw, Send, Sparkles, Trash2 } from 'lucide-react'
 import type { Phase, Recipe, Tab } from '@/lib/types'
 import { useVoice } from '@/lib/voice'
 import { parseIntent, generateRecipe, updatePreferences, updateFridge } from '@/lib/nim'
@@ -88,6 +88,7 @@ function AppShell({ auth }: { auth: Auth }) {
   const [profileError, setProfileError] = useState<string | null>(null)
   const [profileQuery, setProfileQuery] = useState('')
   const [authOpen, setAuthOpen] = useState(false)
+  const [authInitial, setAuthInitial] = useState<'login' | 'register'>('login')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [fridgeOpen, setFridgeOpen] = useState(false)
   const [fridgeBusy, setFridgeBusy] = useState(false)
@@ -276,8 +277,10 @@ function AppShell({ auth }: { auth: Auth }) {
             <ProfileMenu
               user={user}
               onOpenSettings={() => setSettingsOpen(true)}
-              onOpenHistory={() => setTab('history')}
-              onOpenAuth={() => setAuthOpen(true)}
+              onOpenAuth={(mode = 'login') => {
+                setAuthInitial(mode)
+                setAuthOpen(true)
+              }}
               onLogout={() => void auth.logout()}
             />
           </header>
@@ -334,25 +337,14 @@ function AppShell({ auth }: { auth: Auth }) {
               />
             )}
 
-            {tab === 'history' && (
-              <ListTab
-                variant="history"
-                recipes={store.history}
+            {tab === 'saved' && (
+              <MyRecipesView
+                history={store.history}
+                saved={store.saved}
                 isSaved={store.isSaved}
                 onOpen={openRecipe}
                 onToggleSaved={(r) => store.toggleSaved(r)}
                 onClear={store.clearHistory}
-              />
-            )}
-
-            {tab === 'saved' && (
-              <ListTab
-                variant="saved"
-                recipes={store.saved}
-                isSaved={store.isSaved}
-                onOpen={openRecipe}
-                onToggleSaved={(r) => store.toggleSaved(r)}
-                onClear={() => {}}
               />
             )}
           </div>
@@ -375,6 +367,7 @@ function AppShell({ auth }: { auth: Auth }) {
 
       {authOpen && (
         <AuthScreen
+          initial={authInitial}
           onClose={() => setAuthOpen(false)}
           onLogin={async (u, p) => auth.login(u, p)}
           onRegister={async (u, p, q, a) => auth.register(u, p, q, a)}
@@ -396,7 +389,79 @@ function AppShell({ auth }: { auth: Auth }) {
   )
 }
 
-/** Reusable list view for History / Saved tabs. */
+/** "My Recipes" screen: a History/Saved segmented bar over the shared list view. */
+function MyRecipesView({
+  history,
+  saved,
+  isSaved,
+  onOpen,
+  onToggleSaved,
+  onClear,
+}: {
+  history: Recipe[]
+  saved: Recipe[]
+  isSaved: (id: string) => boolean
+  onOpen: (r: Recipe) => void
+  onToggleSaved: (r: Recipe) => void
+  onClear: () => void
+}) {
+  const [section, setSection] = useState<'history' | 'saved'>('saved')
+
+  return (
+    <>
+      <div className="-mb-1">
+        <h2 className="text-[24px] font-bold tracking-tight">My Recipes</h2>
+      </div>
+      <GlassCard strong className="mt-4 flex items-center gap-1 p-1">
+        {(
+          [
+            { key: 'saved', label: 'Saved', icon: <Bookmark className="h-4 w-4" /> },
+            { key: 'history', label: 'History', icon: <Clock className="h-4 w-4" /> },
+          ] as const
+        ).map((seg) => (
+          <button
+            key={seg.key}
+            type="button"
+            onClick={() => setSection(seg.key)}
+            aria-current={section === seg.key ? 'page' : undefined}
+            className={cn(
+              'pressable flex h-11 flex-1 items-center justify-center gap-1.5 rounded-full text-[13px] font-semibold transition-colors',
+              section === seg.key
+                ? 'bg-white/90 text-ink shadow-[0_2px_10px_rgba(0,0,0,0.1)]'
+                : 'text-ink-soft',
+            )}
+          >
+            {seg.icon}
+            {seg.label}
+          </button>
+        ))}
+      </GlassCard>
+      <div className="mt-5">
+        {section === 'history' ? (
+          <ListTab
+            variant="history"
+            recipes={history}
+            isSaved={isSaved}
+            onOpen={onOpen}
+            onToggleSaved={onToggleSaved}
+            onClear={onClear}
+          />
+        ) : (
+          <ListTab
+            variant="saved"
+            recipes={saved}
+            isSaved={isSaved}
+            onOpen={onOpen}
+            onToggleSaved={onToggleSaved}
+            onClear={() => {}}
+          />
+        )}
+      </div>
+    </>
+  )
+}
+
+/** Reusable list view for History / Saved sections. */
 function ListTab({
   variant,
   recipes,
@@ -430,19 +495,18 @@ function ListTab({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between px-1">
-        <h2 className="text-[20px] font-bold">{variant === 'history' ? 'Recent dishes' : 'Saved recipes'}</h2>
-        {variant === 'history' && (
+      {variant === 'history' && (
+        <div className="flex items-center justify-between px-1">
           <button
             type="button"
             onClick={onClear}
             className="pressable inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-medium text-ink-soft"
           >
             <Trash2 className="h-3.5 w-3.5" />
-            Clear
+            Clear history
           </button>
-        )}
-      </div>
+        </div>
+      )}
       {recipes.map((r) => (
         <RecipeListItem
           key={r.id}

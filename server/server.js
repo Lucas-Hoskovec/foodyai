@@ -39,7 +39,7 @@ import express from 'express'
 import cors from 'cors'
 import multer from 'multer'
 import {
-  createUser, getUserByUsername, getUserById, createSession, getUserByToken, deleteSession,
+  createUser, getUserByUsername, getUserById, getUserCredentialsById, createSession, getUserByToken, deleteSession,
   getSecurityQuestionByUsername, getSecurityCredentials, updatePassword, updateAvatar, updateUsername,
   listHistory, listSaved, upsertRecipe, deleteRecipe, clearHistory, setSaved, updateRecipeImage, getPrefs, setPrefs,
   deleteAccount, getFridge, setFridge, getFridgeMode, setFridgeMode, storeUpload, getUpload,
@@ -298,7 +298,7 @@ app.post('/api/auth/reset', ah(async (req, res) => {
 }))
 
 /** Update account settings: username and/or password (requires the current password to change it). */
-app.put('/api/auth/profile', ah(async (req, res) => {
+app.put('/api/auth/profile', requireAuth, ah(async (req, res) => {
   const { username, currentPassword, newPassword } = req.body ?? {}
   if (typeof username === 'string' && username.trim() !== req.user.username) {
     const name = username.trim()
@@ -314,7 +314,7 @@ app.put('/api/auth/profile', ah(async (req, res) => {
     await updateUsername(req.user.id, name)
   }
   if (typeof newPassword === 'string' && newPassword) {
-    const current = await getUserById(req.user.id)
+    const current = await getUserCredentialsById(req.user.id)
     if (typeof currentPassword !== 'string' || !verifyPassword(currentPassword, current.password_hash, current.salt)) {
       res.status(401).json({ error: 'Current password is incorrect' })
       return

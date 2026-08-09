@@ -17,12 +17,16 @@ export function AuthScreen({
   onClose,
   onLogin,
   onRegister,
+  initial,
 }: {
   onClose: () => void
   onLogin: (username: string, password: string) => Promise<unknown>
   onRegister: (username: string, password: string, question: string, answer: string) => Promise<unknown>
+  initial?: 'login' | 'register'
 }) {
-  const [route, setRoute] = useState<Route>({ name: 'login' })
+  const [route, setRoute] = useState<Route>(
+    initial === 'register' ? { name: 'register-credentials' } : { name: 'login' },
+  )
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 

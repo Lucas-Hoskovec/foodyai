@@ -12,7 +12,7 @@ const TABS: Array<{ key: Tab; label: string; icon: LucideIcon }> = [
   { key: 'home', label: 'Home', icon: House },
   { key: 'me', label: 'About me', icon: Sparkles },
   { key: 'fridge', label: 'My Fridge', icon: Refrigerator },
-  { key: 'saved', label: 'Saved', icon: Bookmark },
+  { key: 'saved', label: 'My Recipes', icon: Bookmark },
 ]
 
 export function TabBar({ active, onSelect, hidden }: TabBarProps) {

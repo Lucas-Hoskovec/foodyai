@@ -60,6 +60,15 @@ export async function getUserById(id) {
   return rows[0] ?? null
 }
 
+/** Full user row including credentials — for server-internal verification only, never sent to clients. */
+export async function getUserCredentialsById(id) {
+  const { rows } = await pool.query(
+    `SELECT id, username, avatar, password_hash, salt FROM users WHERE id = $1`,
+    [Number(id)],
+  )
+  return rows[0] ?? null
+}
+
 /** Lookup a user for password recovery (no credentials, only the question). */
 export async function getSecurityQuestionByUsername(username) {
   const { rows } = await pool.query(

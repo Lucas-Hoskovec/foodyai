@@ -1,17 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
-import { Clock, LogIn, LogOut, Settings, UserPlus } from 'lucide-react'
+import { LogIn, LogOut, Settings, UserPlus } from 'lucide-react'
 import type { AuthUser } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 interface ProfileMenuProps {
   user: AuthUser | null
   onOpenSettings: () => void
-  onOpenHistory: () => void
-  onOpenAuth: () => void
+  onOpenAuth: (mode?: 'login' | 'register') => void
   onLogout: () => void
 }
 
-export function ProfileMenu({ user, onOpenSettings, onOpenHistory, onOpenAuth, onLogout }: ProfileMenuProps) {
+export function ProfileMenu({ user, onOpenSettings, onOpenAuth, onLogout }: ProfileMenuProps) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement | null>(null)
 
@@ -69,7 +68,6 @@ export function ProfileMenu({ user, onOpenSettings, onOpenHistory, onOpenAuth, o
               </div>
               <div className="mx-1 border-t border-black/5" />
               <MenuItem icon={<Settings className="h-4 w-4" />} label="Settings" onClick={() => { setOpen(false); onOpenSettings() }} />
-              <MenuItem icon={<Clock className="h-4 w-4" />} label="History" onClick={() => { setOpen(false); onOpenHistory() }} />
               <div className="mx-1 border-t border-black/5" />
               <MenuItem icon={<LogOut className="h-4 w-4" />} label="Sign out" danger onClick={() => { setOpen(false); onLogout() }} />
             </>
@@ -77,8 +75,8 @@ export function ProfileMenu({ user, onOpenSettings, onOpenHistory, onOpenAuth, o
             <>
               <div className="px-3 py-2 text-[13px] font-semibold text-ink">Guest session</div>
               <div className="mx-1 border-t border-black/5" />
-              <MenuItem icon={<LogIn className="h-4 w-4" />} label="Sign in" onClick={() => { setOpen(false); onOpenAuth() }} />
-              <MenuItem icon={<UserPlus className="h-4 w-4" />} label="Create account" onClick={() => { setOpen(false); onOpenAuth() }} />
+              <MenuItem icon={<LogIn className="h-4 w-4" />} label="Sign in" onClick={() => { setOpen(false); onOpenAuth('login') }} />
+              <MenuItem icon={<UserPlus className="h-4 w-4" />} label="Create account" onClick={() => { setOpen(false); onOpenAuth('register') }} />
             </>
           )}
         </div>
