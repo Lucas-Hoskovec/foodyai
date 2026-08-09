@@ -62,6 +62,7 @@ async function chatCompletion(
   temperature: number,
   maxTokens = 1500,
   jsonObject = false,
+  options?: { instruct?: boolean },
 ): Promise<string> {
   let attempt = 0
   const maxAttempts = 4
@@ -78,6 +79,9 @@ async function chatCompletion(
           max_tokens: maxTokens,
           messages,
           ...(jsonObject ? { response_format: { type: 'json_object' } } : {}),
+          ...(options?.instruct
+            ? { top_k: 1, chat_template_kwargs: { enable_thinking: false } }
+            : {}),
         }),
       })
 
@@ -158,7 +162,9 @@ Choose the dish based on THESE ingredients first: pick the best dish that can be
         { role: 'user', content: transcript + fridgeBlock },
       ],
       0.2,
-      1800,
+      1024,
+      false,
+      { instruct: true },
     ),
   )
 
@@ -352,6 +358,9 @@ export async function updatePreferences(transcript: string, current: Preferences
         },
       ],
       0.2,
+      1024,
+      false,
+      { instruct: true },
     ),
   )
 
@@ -424,6 +433,7 @@ export async function updateFridge(transcript: string, current: FridgeItem[]): P
       0.2,
       1500,
       true,
+      { instruct: true },
     )
   })
 
