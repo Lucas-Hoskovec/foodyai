@@ -81,7 +81,7 @@ const upload = multer({
 
 const NIM_BASE = 'https://integrate.api.nvidia.com/v1'
 const NIM_KEY = env.NIM_API_KEY ?? env.VITE_NIM_API_KEY
-const NIM_MODEL = env.NIM_MODEL ?? env.VITE_NIM_MODEL ?? 'nvidia/nemotron-3-ultra-550b-a55b'
+const NIM_MODEL = env.NIM_MODEL ?? env.VITE_NIM_MODEL ?? 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning'
 const PORT = Number(env.PORT ?? 3001)
 
 const app = express()

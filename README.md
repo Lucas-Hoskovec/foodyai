@@ -58,5 +58,5 @@ function to the same `/api/nim` path pattern.
 | Variable | Default | Purpose |
 |---|---|---|
 | `VITE_NIM_API_KEY` | — | Your NVIDIA NIM key (required). |
-| `VITE_NIM_MODEL` | `nvidia/nemotron-3-ultra-550b-a55b` | Model for intent parsing + recipe generation. |
+| `VITE_NIM_MODEL` | `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning` | Model for intent parsing + recipe generation. |
 | `VITE_NIM_BASE_URL` | `/api/nim` | Override for self-hosted / remote NIM. |

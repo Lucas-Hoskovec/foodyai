@@ -3,7 +3,7 @@ import { nowId, sleep } from './utils'
 
 const BASE_URL = import.meta.env.VITE_NIM_BASE_URL ?? '/api/nim'
 export const NIM_MODEL =
-  import.meta.env.VITE_NIM_MODEL ?? 'nvidia/nemotron-3-ultra-550b-a55b'
+  import.meta.env.VITE_NIM_MODEL ?? 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning'
 
 /** Very conservative pacing so we stay well under the free-tier ~40 req/min cap. */
 const MIN_INTERVAL_MS = 1600
