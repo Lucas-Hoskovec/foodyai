@@ -146,19 +146,6 @@ export const api = {
     ) as Promise<{ saved: Recipe[] }>
   },
 
-  /** Upload a recipe photo; resolves to the resulting URL path. */
-  async uploadRecipeImage(id: string, file: File): Promise<string> {
-    const compressed = await compressImageFile(file, { maxEdge: 1080 })
-    const form = new FormData()
-    form.append('image', compressed, compressed.name)
-    const body = (await request(`/api/recipes/${encodeURIComponent(id)}/image`, {
-      method: 'POST',
-      body: form,
-    })) as { image?: string }
-    if (typeof body.image !== 'string') throw new Error('Upload failed')
-    return body.image
-  },
-
   /** Save taste preferences. */
   savePrefs(prefs: Preferences): Promise<{ prefs: Preferences }> {
     return request('/api/prefs', jsonInit('PUT', prefs)) as Promise<{ prefs: Preferences }>

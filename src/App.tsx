@@ -4,6 +4,7 @@ import type { FridgeItem, Phase, Recipe, Tab } from '@/lib/types'
 import { useVoice } from '@/lib/voice'
 import { parseIntent, generateRecipe, updatePreferences, updateFridge } from '@/lib/nim'
 import { useFoodyStore } from '@/lib/store'
+import { findRecipeImage } from '@/lib/recipeImage'
 import { useAuth, type Auth } from '@/lib/auth'
 import { cn } from '@/lib/utils'
 import { TabBar } from '@/components/TabBar'
@@ -100,6 +101,7 @@ function AppShell({ auth }: { auth: Auth }) {
   const [fridgeError, setFridgeError] = useState<string | null>(null)
   const [scanOpen, setScanOpen] = useState(false)
   const [scanFile, setScanFile] = useState<File | null>(null)
+  const [elapsed, setElapsed] = useState(0)
 
   const busyRef = useRef(false)
   const profileBusyRef = useRef(false)
@@ -117,12 +119,20 @@ function AppShell({ auth }: { auth: Auth }) {
   const tabRef = useRef(tab)
   tabRef.current = tab
 
+  // Keep the "Researching recipes…" timer running across tab switches until the recipe lands.
+  useEffect(() => {
+    if (phase !== 'thinking') return
+    const ticker = window.setInterval(() => setElapsed((s) => s + 1), 1000)
+    return () => window.clearInterval(ticker)
+  }, [phase])
+
   const runFlow = useCallback(
     async (raw: string) => {
       const trimmed = raw.trim()
       if (!trimmed || busyRef.current) return
       busyRef.current = true
       setPhase('thinking')
+      setElapsed(0)
       setError(null)
       setQuery(trimmed)
 
@@ -132,6 +142,7 @@ function AppShell({ auth }: { auth: Auth }) {
           store.prefs,
           store.fridgeMode && store.fridge.length > 0 ? store.fridge : undefined,
         )
+        const imagePromise = findRecipeImage({ title: intent.dish, searchTerm: intent.searchTerm })
         const result = await generateRecipe(
           intent,
           store.prefs,
@@ -140,6 +151,14 @@ function AppShell({ auth }: { auth: Auth }) {
 
         if (!result.steps.length || !result.ingredients.length) {
           throw new Error('That dish came back incomplete. Try rephrasing it.')
+        }
+        let image = await imagePromise
+        if (!image && result.title.trim() !== intent.dish.trim()) {
+          image = await findRecipeImage({ title: result.title, searchTerm: intent.searchTerm })
+        }
+        if (image) {
+          result.image = image.image
+          result.imageCredit = image.credit
         }
         result.query = trimmed
         store.addToHistory(result)
@@ -344,6 +363,7 @@ function AppShell({ auth }: { auth: Auth }) {
                   onSubmit={submitTyped}
                   onMicPress={onMicPress}
                   onRetry={() => void runFlow(query)}
+                  elapsed={elapsed}
                 />
               </>
             )}
@@ -596,6 +616,7 @@ function HomeView(props: {
   onSubmit: () => void
   onMicPress: () => void
   onRetry: () => void
+  elapsed: number
 }) {
   const { phase, text } = props
   const thinking = phase === 'thinking'
@@ -614,7 +635,7 @@ function HomeView(props: {
       )}
 
       {thinking ? (
-        <ThinkingView query={props.query} />
+        <ThinkingView query={props.query} elapsed={props.elapsed} />
       ) : (
         <>
           <GlassCard className="mt-8 p-1">
@@ -708,14 +729,7 @@ function HomeView(props: {
   )
 }
 
-function ThinkingView({ query }: { query: string }) {
-  const [elapsed, setElapsed] = useState(0)
-
-  useEffect(() => {
-    const ticker = window.setInterval(() => setElapsed((s) => s + 1), 1000)
-    return () => window.clearInterval(ticker)
-  }, [])
-
+function ThinkingView({ query, elapsed }: { query: string; elapsed: number }) {
   return (
     <div className="flex flex-col items-center pt-10 text-center">
       <div className="relative flex h-32 w-32 items-center justify-center">
