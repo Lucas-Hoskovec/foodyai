@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChefHat, ChevronDown, Mic as MicIcon, RotateCcw, Sparkles, X } from 'lucide-react'
+import { ChefHat, ChevronDown, Keyboard, Mic as MicIcon, RotateCcw, Send, Sparkles, X } from 'lucide-react'
 import { GlassCard } from '@/components/GlassCard'
 import { cn } from '@/lib/utils'
 
@@ -15,6 +15,7 @@ interface ProfileViewProps {
   busy: boolean
   error: string | null
   onMicPress: () => void
+  onSubmitText: (raw: string) => void
   onRetry: () => void
   onRemove: (list: 'likes' | 'dislikes', item: string) => void
 }
@@ -58,10 +59,20 @@ export function ProfileView({
   busy,
   error,
   onMicPress,
+  onSubmitText,
   onRetry,
   onRemove,
 }: ProfileViewProps) {
   const overview = useState(() => pickChefLine(lastSpeech))[0]
+  const [showText, setShowText] = useState(!voiceSupported)
+  const [typed, setTyped] = useState('')
+
+  const submitTyped = () => {
+    if (!typed.trim() || busy) return
+    onSubmitText(typed)
+    setTyped('')
+    setShowText(false)
+  }
   return (
     <div className="flex min-h-full flex-col pb-6">
       <header className="flex items-center gap-3 pt-2">
@@ -139,7 +150,31 @@ export function ProfileView({
           </div>
         )}
 
-        {voiceSupported ? (
+        {showText ? (
+          <GlassCard strong className="mt-4 w-full max-w-[340px] p-1.5">
+            <div className="flex items-center gap-1 pl-3 pr-1">
+              <input
+                type="text"
+                value={typed}
+                onChange={(e) => setTyped(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') submitTyped()
+                }}
+                placeholder="e.g. I love pasta but not mushrooms"
+                enterKeyHint="send"
+                className="h-11 flex-1 bg-transparent text-[14px] text-ink outline-none placeholder:text-ink-faint"
+              />
+              <button
+                type="button"
+                aria-label="Send"
+                onClick={submitTyped}
+                className="pressable flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ink text-white"
+              >
+                <Send className="h-4 w-4" />
+              </button>
+            </div>
+          </GlassCard>
+        ) : voiceSupported ? (
           <button
             type="button"
             aria-label={listening ? 'Stop speaking' : 'Speak to update your taste profile'}
@@ -155,16 +190,24 @@ export function ProfileView({
             )}
             <MicIcon className="h-6 w-6" strokeWidth={2} />
           </button>
-        ) : (
-          <p className="text-center text-[13px] text-ink-faint">
-            Voice isn’t supported here — prefer classifiers prefer your typed requests handled on the Home tab.
-          </p>
+        ) : null}
+
+        {voiceSupported && (
+          <button
+            type="button"
+            aria-label={showText ? 'Talk instead' : 'Type instead'}
+            onClick={() => setShowText((prev) => !prev)}
+            className="pressable mt-3 inline-flex items-center gap-1.5 rounded-full border border-ink/10 bg-white/60 px-3.5 py-2 text-[12px] font-medium text-ink/70"
+          >
+            <Keyboard className="h-4 w-4" />
+            {showText ? 'Talk instead' : 'Type instead'}
+          </button>
         )}
 
         <p className="mt-3 max-w-[260px] text-center text-[13px] leading-snug text-ink-faint">
           {listening
             ? 'Listening… tell Foody AI what to add or remove.'
-            : 'Tap the mic and talk about what you like — or what you don’t.'}
+            : 'Tell Foody AI what you like — or what you don’t.'}
         </p>
       </div>
     </div>

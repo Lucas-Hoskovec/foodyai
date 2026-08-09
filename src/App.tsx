@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Bookmark, Clock, Mic as MicIcon, RotateCcw, Send, Sparkles, Trash2 } from 'lucide-react'
 import type { FridgeItem, Phase, Recipe, Tab } from '@/lib/types'
 import { useVoice } from '@/lib/voice'
@@ -18,6 +18,7 @@ import { ProfileSettings } from '@/components/ProfileSettings'
 import { FridgeView } from '@/components/FridgeView'
 import { FridgeAddModal } from '@/components/FridgeAddModal'
 import { FridgePhotoScanner } from '@/components/FridgePhotoScanner'
+import { TasteSetupModal } from '@/components/TasteSetupModal'
 import { Switch } from '@/components/Switch'
 
 const EXAMPLE_POOL = [
@@ -77,9 +78,11 @@ function App() {
 function AppShell({ auth }: { auth: Auth }) {
   const user = auth.user
   const store = useFoodyStore(Boolean(user))
+  const justRegistered = Boolean(auth.justRegistered)
 
   const [phase, setPhase] = useState<Phase>('idle')
-  const [tab, setTab] = useState<Tab>('home')
+  const [tab, setTab] = useState<Tab>(justRegistered ? 'me' : 'home')
+  const [setupOpen, setSetupOpen] = useState(justRegistered)
   const [text, setText] = useState('')
   const [query, setQuery] = useState('')
   const [examples] = useState<string[]>(() => pickExamples())
@@ -245,6 +248,11 @@ function AppShell({ auth }: { auth: Auth }) {
     setScanFile(null)
   }, [])
 
+  const closeSetup = useCallback(() => {
+    if (voice.isListening) voice.stop()
+    setSetupOpen(false)
+  }, [voice])
+
   const onProfileMicPress = useCallback(() => {
     if (phase === 'thinking' || !voice.supported) return
     if (voice.isListening) {
@@ -308,6 +316,7 @@ function AppShell({ auth }: { auth: Auth }) {
             <ProfileMenu
               user={user}
               onOpenSettings={() => setSettingsOpen(true)}
+              onOpenProfile={() => setTab('me')}
               onOpenAuth={(mode = 'login') => {
                 setAuthInitial(mode)
                 setAuthOpen(true)
@@ -352,6 +361,7 @@ function AppShell({ auth }: { auth: Auth }) {
                 busy={profileBusy}
                 error={profileError}
                 onMicPress={onProfileMicPress}
+                onSubmitText={(raw) => void runProfileUpdate(raw)}
                 onRetry={() => void runProfileUpdate(profileQuery)}
                 onRemove={(list, item) => store.removePreference(list, item)}
               />
@@ -382,7 +392,7 @@ function AppShell({ auth }: { auth: Auth }) {
         </main>
       )}
 
-      <TabBar active={tab} onSelect={(t) => setTab(t)} hidden={phase === 'recipe' || authOpen || settingsOpen || fridgeOpen || scanOpen} />
+      <TabBar active={tab} onSelect={(t) => setTab(t)} hidden={phase === 'recipe' || authOpen || settingsOpen || fridgeOpen || scanOpen || setupOpen} />
 
       {fridgeOpen && (
         <FridgeAddModal
@@ -399,6 +409,21 @@ function AppShell({ auth }: { auth: Auth }) {
 
       {scanOpen && scanFile && (
         <FridgePhotoScanner file={scanFile} onClose={closeScan} onSave={saveScannedItems} />
+      )}
+
+      {setupOpen && (
+        <TasteSetupModal
+          voiceSupported={voice.supported}
+          listening={voice.isListening}
+          transcript={voice.transcript}
+          busy={profileBusy}
+          error={profileError}
+          onMicPress={onProfileMicPress}
+          onSubmitText={(raw) => void runProfileUpdate(raw)}
+          onRetry={() => void runProfileUpdate(profileQuery)}
+          onDone={closeSetup}
+          onSkip={closeSetup}
+        />
       )}
 
       {authOpen && (
@@ -684,6 +709,13 @@ function HomeView(props: {
 }
 
 function ThinkingView({ query }: { query: string }) {
+  const [elapsed, setElapsed] = useState(0)
+
+  useEffect(() => {
+    const ticker = window.setInterval(() => setElapsed((s) => s + 1), 1000)
+    return () => window.clearInterval(ticker)
+  }, [])
+
   return (
     <div className="flex flex-col items-center pt-10 text-center">
       <div className="relative flex h-32 w-32 items-center justify-center">
@@ -696,7 +728,7 @@ function ThinkingView({ query }: { query: string }) {
       {query && <p className="mt-1.5 max-w-[260px] text-[14px] text-ink-soft">“{query}”</p>}
       <div className="mt-5 flex items-center gap-1.5 text-[13px] text-ink-faint">
         <Sparkles className="h-3.5 w-3.5" />
-        Researching the best recipes to cure your hunger
+        {elapsed > 0 ? `Researching recipes… ${elapsed}s` : 'Researching the best recipes to cure your hunger'}
       </div>
     </div>
   )

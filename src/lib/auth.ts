@@ -7,6 +7,7 @@ export type AuthStatus = 'loading' | 'signedOut' | 'signedIn'
 export function useAuth() {
   const [status, setStatus] = useState<AuthStatus>('loading')
   const [user, setUser] = useState<AuthUser | null>(null)
+  const [justRegistered, setJustRegistered] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -31,6 +32,7 @@ export function useAuth() {
     const next = await api.login(username, password)
     setUser(next)
     setStatus('signedIn')
+    setJustRegistered(false)
     return next
   }, [])
 
@@ -38,6 +40,7 @@ export function useAuth() {
     const next = await api.register(username, password, securityQuestion, securityAnswer)
     setUser(next)
     setStatus('signedIn')
+    setJustRegistered(true)
     return next
   }, [])
 
@@ -61,6 +64,7 @@ export function useAuth() {
     }
     setUser(null)
     setStatus('signedOut')
+    setJustRegistered(false)
   }, [])
 
   /** Delete the account server-side, then sign out on this device. */
@@ -68,9 +72,10 @@ export function useAuth() {
     await api.deleteAccount(currentPassword)
     setUser(null)
     setStatus('signedOut')
+    setJustRegistered(false)
   }, [])
 
-  return { status, user, login, register, logout, deleteAccount, updateProfile, updateAvatar }
+  return { status, user, login, register, logout, deleteAccount, updateProfile, updateAvatar, justRegistered }
 }
 
 export type Auth = ReturnType<typeof useAuth>

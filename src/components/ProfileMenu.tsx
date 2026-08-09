@@ -1,16 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
-import { LogIn, LogOut, Settings, UserPlus } from 'lucide-react'
+import { LogIn, LogOut, Settings, Sparkles, UserPlus } from 'lucide-react'
 import type { AuthUser } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 interface ProfileMenuProps {
   user: AuthUser | null
   onOpenSettings: () => void
+  onOpenProfile: () => void
   onOpenAuth: (mode?: 'login' | 'register') => void
   onLogout: () => void
 }
 
-export function ProfileMenu({ user, onOpenSettings, onOpenAuth, onLogout }: ProfileMenuProps) {
+export function ProfileMenu({ user, onOpenSettings, onOpenProfile, onOpenAuth, onLogout }: ProfileMenuProps) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement | null>(null)
 
@@ -67,6 +68,7 @@ export function ProfileMenu({ user, onOpenSettings, onOpenAuth, onLogout }: Prof
                 <span className="min-w-0 truncate text-[13px] font-semibold">{user.username}</span>
               </div>
               <div className="mx-1 border-t border-black/5" />
+              <MenuItem icon={<Sparkles className="h-4 w-4" />} label="About me" onClick={() => { setOpen(false); onOpenProfile() }} />
               <MenuItem icon={<Settings className="h-4 w-4" />} label="Settings" onClick={() => { setOpen(false); onOpenSettings() }} />
               <div className="mx-1 border-t border-black/5" />
               <MenuItem icon={<LogOut className="h-4 w-4" />} label="Sign out" danger onClick={() => { setOpen(false); onLogout() }} />
