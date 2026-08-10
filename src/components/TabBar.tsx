@@ -1,4 +1,4 @@
-import { Bookmark, House, Refrigerator, type LucideIcon } from 'lucide-react'
+import { Bookmark, House, Refrigerator, Users, type LucideIcon } from 'lucide-react'
 import type { Tab } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
@@ -11,6 +11,7 @@ interface TabBarProps {
 const TABS: Array<{ key: Tab; label: string; icon: LucideIcon }> = [
   { key: 'home', label: 'Home', icon: House },
   { key: 'fridge', label: 'My Fridge', icon: Refrigerator },
+  { key: 'social', label: 'Social', icon: Users },
   { key: 'saved', label: 'My Recipes', icon: Bookmark },
 ]
 

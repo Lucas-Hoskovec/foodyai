@@ -23,7 +23,8 @@
  *   DELETE /api/recipes/:id          (remove one recipe)
  *   PUT  /api/recipes/:id/saved      (toggle bookmark)
  *   POST /api/recipes/:id/image      (upload a photo)
- *   GET  /api/uploads/:id            (serve an uploaded image, owner only)
+ *   GET  /api/uploads/:id            (serve an uploaded image, signed-in users)
+ *   GET  /api/social/users           (search users) + friends/posts/groups CRUD
  *   PUT  /api/prefs                  (save taste preferences)
  *   GET  /api/fridge                 (fridge inventory for current user)
  *   PUT  /api/fridge                 (save the full fridge inventory)
@@ -33,7 +34,7 @@
 
 import { env } from 'node:process'
 import { fileURLToPath } from 'node:url'
-import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
+import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
 import path from 'node:path'
 import express from 'express'
 import cors from 'cors'
@@ -43,6 +44,10 @@ import {
   getSecurityQuestionByUsername, getSecurityCredentials, updatePassword, updateAvatar, updateUsername,
   listHistory, listSaved, upsertRecipe, deleteRecipe, clearHistory, setSaved, updateRecipeImage, getPrefs, setPrefs,
   deleteAccount, getFridge, setFridge, getFridgeMode, setFridgeMode, storeUpload, getUpload,
+  searchUsers, createFriendRequest, getFriendRequest, listIncomingRequests, deleteFriendRequest, addFriendship,
+  removeFriendship, listFriends, isFriend, deleteFriendRequestByPair, createPost, listFeed, listPostsByUser, deletePost, toggleLike, unlike,
+  totalLikes, createComment, listCommentsByPost, deleteCommentIfOwner, createGroup, addGroupMember, removeGroupMember, listMyGroups, getGroup, getGroupMembers,
+  isGroupMember, createGroupMessage, listGroupMessages,
 } from './db.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -240,7 +245,7 @@ app.post('/api/auth/register', ah(async (req, res) => {
     throw err
   }
   await login(res, userId)
-  res.status(201).json({ user: await getUserById(userId) })
+  res.status(201).json({ user: await publicUser(userId) })
 }))
 
 app.post('/api/auth/login', ah(async (req, res) => {
@@ -255,7 +260,7 @@ app.post('/api/auth/login', ah(async (req, res) => {
     return
   }
   await login(res, Number(user.id))
-  res.json({ user: await getUserById(user.id) })
+  res.json({ user: await publicUser(user.id) })
 }))
 
 app.post('/api/auth/logout', ah(async (req, res) => {
@@ -339,7 +344,7 @@ app.put('/api/auth/profile', requireAuth, ah(async (req, res) => {
     const salt = randomBytes(16).toString('hex')
     await updatePassword(req.user.id, hashPassword(newPassword, salt), salt)
   }
-  res.json({ user: await getUserById(req.user.id) })
+  res.json({ user: await publicUser(req.user.id) })
 }))
 
 /** Permanently delete the account and all associated data (recipes, prefs, sessions, uploads). */
@@ -366,8 +371,16 @@ async function login(res, userId) {
   setSessionCookie(res, token)
 }
 
+/** Public-safe account object: bigserial ids come back from pg as strings,
+ *  but social endpoints coerce ids to numbers — keep auth identical so the
+ *  client's `me.id === comment.user.id` comparisons always match. */
+async function publicUser(id) {
+  const row = await getUserById(id)
+  return row ? { id: Number(row.id), username: row.username, avatar: row.avatar } : null
+}
+
 app.get('/api/auth/me', ah(async (req, res) => {
-  res.json({ user: req.user ? await getUserById(req.user.id) : null })
+  res.json({ user: req.user ? await publicUser(req.user.id) : null })
 }))
 
 // ---- Recipes & preferences (require auth) ----
@@ -461,6 +474,414 @@ app.get('/api/fridge', ah(async (req, res) => {
   res.json({ fridge: await getFridge(req.user.id), fridgeMode: await getFridgeMode(req.user.id) })
 }))
 
+// ---- Social (friends, posts, groups) ----
+
+app.use('/api/social', requireAuth)
+
+/** Search users by username. ?q=term — returns friend status per result. */
+app.get('/api/social/users', ah(async (req, res) => {
+  const q = typeof req.query.q === 'string' ? req.query.q.trim() : ''
+  if (!q) {
+    res.json({ users: [] })
+    return
+  }
+  res.json({ users: await searchUsers(req.user.id, q) })
+}))
+
+/** Send a friend request to another user. */
+app.post('/api/social/friend-requests', ah(async (req, res) => {
+  const to = Number(req.body?.toUserId)
+  if (!Number.isInteger(to) || to <= 0) {
+    res.status(400).json({ error: 'A target user id is required' })
+    return
+  }
+  if (to === req.user.id) {
+    res.status(400).json({ error: 'You cannot befriend yourself' })
+    return
+  }
+  const target = await getUserById(to)
+  if (!target) {
+    res.status(404).json({ error: 'User not found' })
+    return
+  }
+  const existing = await isFriend(req.user.id, to)
+  if (existing) {
+    res.status(409).json({ error: 'You are already friends' })
+    return
+  }
+  const id = await createFriendRequest(req.user.id, to)
+  res.status(201).json({ request: { id, status: 'pending' } })
+}))
+
+/** Incoming friend requests. */
+app.get('/api/social/friend-requests', ah(async (req, res) => {
+  res.json({ requests: await listIncomingRequests(req.user.id) })
+}))
+
+/** Accept an incoming friend request. */
+app.post('/api/social/friend-requests/:id/accept', ah(async (req, res) => {
+  const request = await getFriendRequest(req.params.id)
+  if (!request || Number(request.addressee_id) !== req.user.id) {
+    res.status(404).json({ error: 'Request not found' })
+    return
+  }
+  await addFriendship(request.requester_id, req.user.id)
+  await deleteFriendRequest(Number(req.params.id))
+  res.json({ ok: true })
+}))
+
+/** Decline an incoming friend request. */
+app.post('/api/social/friend-requests/:id/decline', ah(async (req, res) => {
+  const request = await getFriendRequest(req.params.id)
+  if (!request || Number(request.addressee_id) !== req.user.id) {
+    res.status(404).json({ error: 'Request not found' })
+    return
+  }
+  await deleteFriendRequest(Number(req.params.id))
+  res.json({ ok: true })
+}))
+
+/** Cancel an outgoing friend request. */
+app.delete('/api/social/friend-requests/:id', ah(async (req, res) => {
+  const request = await getFriendRequest(req.params.id)
+  if (!request || Number(request.requester_id) !== req.user.id) {
+    res.status(404).json({ error: 'Request not found' })
+    return
+  }
+  await deleteFriendRequest(Number(req.params.id))
+  res.json({ ok: true })
+}))
+
+/** Cancel an outgoing friend request to a specific user. */
+app.delete('/api/social/friend-requests/to/:userId', ah(async (req, res) => {
+  const to = Number(req.params.userId)
+  if (!Number.isInteger(to) || to <= 0) {
+    res.status(400).json({ error: 'A user id is required' })
+    return
+  }
+  await deleteFriendRequestByPair(req.user.id, to)
+  res.json({ ok: true })
+}))
+
+/** Remove a friendship. */
+app.delete('/api/social/friends/:userId', ah(async (req, res) => {
+  const other = Number(req.params.userId)
+  if (!Number.isInteger(other) || other <= 0) {
+    res.status(400).json({ error: 'A user id is required' })
+    return
+  }
+  await removeFriendship(req.user.id, other)
+  res.json({ ok: true })
+}))
+
+/** My accepted friends. */
+app.get('/api/social/friends', ah(async (req, res) => {
+  res.json({ friends: await listFriends(req.user.id) })
+}))
+
+/** Profile summary for a user: post count, friend count, total likes gained, posts. */
+app.get('/api/social/profile/:userId', ah(async (req, res) => {
+  const target = Number(req.params.userId)
+  if (!Number.isInteger(target) || target <= 0) {
+    res.status(400).json({ error: 'A user id is required' })
+    return
+  }
+  const user = await getUserById(target)
+  if (!user) {
+    res.status(404).json({ error: 'User not found' })
+    return
+  }
+  const [friends, posts, likes] = await Promise.all([
+    listFriends(target),
+    listPostsByUser(target, req.user.id),
+    totalLikes(target),
+  ])
+  res.json({
+    profile: {
+      user: { id: Number(user.id), username: user.username, avatar: user.avatar },
+      postCount: posts.length,
+      friendCount: friends.length,
+      likesGained: likes,
+      friends: friends.map((f) => ({ id: Number(f.id), username: f.username, avatar: f.avatar })),
+      posts,
+      self: req.user.id === Number(user.id),
+    },
+  })
+}))
+
+/** Feed: posts from my accepted friends (plus my own), newest first. */
+app.get('/api/social/feed', ah(async (req, res) => {
+  res.json({ posts: await listFeed(req.user.id) })
+}))
+
+/** My own posts, newest first. */
+app.get('/api/social/posts/me', ah(async (req, res) => {
+  res.json({ posts: await listPostsByUser(req.user.id, req.user.id) })
+}))
+
+/** Create a post. Body: { recipeId?, recipe?, title, description, image }. */
+app.post('/api/social/posts', ah(async (req, res) => {
+  const { recipe, recipeId, title, description, image } = req.body ?? {}
+  if (typeof title !== 'string') {
+    res.status(400).json({ error: 'A title is required' })
+    return
+  }
+  let recipeJson = ''
+  if (recipe && typeof recipe.id === 'string' && recipe.title) {
+    recipeJson = JSON.stringify(recipe)
+  }
+  const id = randomUUID()
+  await createPost({
+    id,
+    user_id: req.user.id,
+    recipe_id: recipeId ? String(recipeId) : recipe?.id ?? null,
+    recipe_json: recipeJson,
+    title: title.slice(0, 120),
+    description: typeof description === 'string' ? description.slice(0, 500) : '',
+    image: typeof image === 'string' ? image : '',
+  })
+  const post = (await listPostsByUser(req.user.id, req.user.id, 1))[0]
+  res.status(201).json({ post })
+}))
+
+/** Upload an image for a post. */
+app.post('/api/social/posts/image', upload.single('image'), ah(async (req, res) => {
+  if (!req.file) {
+    res.status(400).json({ error: 'No image file was provided' })
+    return
+  }
+  const image = await storeUpload(req.user.id, req.file.mimetype, req.file.buffer)
+  res.json({ ok: true, image })
+}))
+
+/** Like a post (idempotent). */
+app.post('/api/social/posts/:id/like', ah(async (req, res) => {
+  await toggleLike(req.params.id, req.user.id)
+  res.json({ ok: true })
+}))
+
+/** Unlike a post. */
+app.delete('/api/social/posts/:id/like', ah(async (req, res) => {
+  await unlike(req.params.id, req.user.id)
+  res.json({ ok: true })
+}))
+
+/** Delete my own post. */
+app.delete('/api/social/posts/:id', ah(async (req, res) => {
+  const own = await listPostsByUser(req.user.id, req.user.id, 500)
+  const found = own.some((p) => p.id === req.params.id)
+  if (!found) {
+    res.status(404).json({ error: 'Post not found' })
+    return
+  }
+  await deletePost(req.params.id)
+  res.json({ ok: true })
+}))
+
+/** Comments on a post, oldest first. */
+app.get('/api/social/posts/:id/comments', ah(async (req, res) => {
+  res.json({ comments: await listCommentsByPost(req.params.id) })
+}))
+
+/** Add a comment to a post. Body: { text }. */
+app.post('/api/social/posts/:id/comments', ah(async (req, res) => {
+  const text = typeof req.body?.text === 'string' ? req.body.text.trim().slice(0, 500) : ''
+  if (!text) {
+    res.status(400).json({ error: 'A comment is required' })
+    return
+  }
+  const id = randomUUID()
+  await createComment({ id, post_id: req.params.id, user_id: req.user.id, text })
+  const comments = await listCommentsByPost(req.params.id)
+  res.status(201).json({ comment: comments[comments.length - 1] })
+}))
+
+/** Delete a comment (own comments only, or the post owner). */
+app.delete('/api/social/posts/:id/comments/:commentId', ah(async (req, res) => {
+  const deleted = await deleteCommentIfOwner(req.params.commentId, req.user.id)
+  if (!deleted) {
+    res.status(404).json({ error: 'Comment not found' })
+    return
+  }
+  res.json({ ok: true })
+}))
+
+/** Create a group. Body: { name, memberIds: number[] }. Members must be my friends. */
+app.post('/api/social/groups', ah(async (req, res) => {
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 60) : ''
+  if (!name) {
+    res.status(400).json({ error: 'A group name is required' })
+    return
+  }
+  const requested = Array.isArray(req.body?.memberIds) ? req.body.memberIds.map(Number).filter((id) => Number.isInteger(id) && id > 0 && id !== req.user.id) : []
+  const friends = await listFriends(req.user.id)
+  const friendIds = new Set(friends.map((f) => Number(f.id)))
+  const id = randomUUID()
+  await createGroup({ id, name, owner_id: req.user.id })
+  await addGroupMember(id, req.user.id, req.user.id, true)
+  for (const memberId of requested) {
+    if (friendIds.has(memberId)) await addGroupMember(id, memberId, req.user.id)
+  }
+  res.status(201).json({ group: (await listMyGroups(req.user.id)).find((g) => g.id === id) ?? { id } })
+}))
+
+/** My groups. */
+app.get('/api/social/groups', ah(async (req, res) => {
+  res.json({ groups: await listMyGroups(req.user.id) })
+}))
+
+/** Group detail + member list. */
+app.get('/api/social/groups/:id', ah(async (req, res) => {
+  const group = await getGroup(req.params.id)
+  if (!group) {
+    res.status(404).json({ error: 'Group not found' })
+    return
+  }
+  const membership = await isGroupMember(req.params.id, req.user.id)
+  if (!membership) {
+    res.status(403).json({ error: 'You are not a member of this group' })
+    return
+  }
+  res.json({
+    group: {
+      id: group.id,
+      name: group.name,
+      ownerId: Number(group.owner_id),
+      isAdmin: membership.admin,
+      members: (await getGroupMembers(req.params.id)).map((m) => ({
+        user: { id: Number(m.user.id), username: m.user.username, avatar: m.user.avatar },
+        isAdmin: m.isAdmin,
+      })),
+    },
+  })
+}))
+
+/** Message history for a group the caller belongs to. */
+app.get('/api/social/groups/:id/messages', ah(async (req, res) => {
+  const membership = await isGroupMember(req.params.id, req.user.id)
+  if (!membership) {
+    res.status(403).json({ error: 'You are not a member of this group' })
+    return
+  }
+  res.json({ messages: await listGroupMessages(req.params.id) })
+}))
+
+/** Send a text or recipe message. Body: { type: 'text'|'recipe', text?, recipe? }. */
+app.post('/api/social/groups/:id/messages', ah(async (req, res) => {
+  const membership = await isGroupMember(req.params.id, req.user.id)
+  if (!membership) {
+    res.status(403).json({ error: 'You are not a member of this group' })
+    return
+  }
+  const type = req.body?.type === 'recipe' ? 'recipe' : 'text'
+  let recipeJson = ''
+  let text = ''
+  if (type === 'recipe') {
+    const recipe = req.body?.recipe
+    if (!recipe || typeof recipe?.id !== 'string' || !recipe.title) {
+      res.status(400).json({ error: 'A valid recipe is required' })
+      return
+    }
+    recipeJson = JSON.stringify(recipe)
+  } else {
+    text = typeof req.body?.text === 'string' ? req.body.text.trim().slice(0, 1000) : ''
+    if (!text && !req.body?.image) {
+      res.status(400).json({ error: 'A message is required' })
+      return
+    }
+  }
+  await createGroupMessage({
+    id: randomUUID(),
+    group_id: req.params.id,
+    sender_id: req.user.id,
+    type,
+    text,
+    image: '',
+    recipe_json: recipeJson,
+  })
+  const messages = await listGroupMessages(req.params.id)
+  res.status(201).json({ message: messages[messages.length - 1] })
+}))
+
+/** Send an image message. */
+app.post('/api/social/groups/:id/messages/image', upload.single('image'), ah(async (req, res) => {
+  const membership = await isGroupMember(req.params.id, req.user.id)
+  if (!membership) {
+    res.status(403).json({ error: 'You are not a member of this group' })
+    return
+  }
+  if (!req.file) {
+    res.status(400).json({ error: 'No image file was provided' })
+    return
+  }
+  const image = await storeUpload(req.user.id, req.file.mimetype, req.file.buffer)
+  await createGroupMessage({
+    id: randomUUID(),
+    group_id: req.params.id,
+    sender_id: req.user.id,
+    type: 'image',
+    text: '',
+    image,
+    recipe_json: '',
+  })
+  const messages = await listGroupMessages(req.params.id)
+  res.status(201).json({ message: messages[messages.length - 1] })
+}))
+
+/** Admin: add a member (must be my friend). Body: { userId }. */
+app.post('/api/social/groups/:id/members', ah(async (req, res) => {
+  const membership = await isGroupMember(req.params.id, req.user.id)
+  if (!membership?.admin) {
+    res.status(403).json({ error: 'Only group admins can add members' })
+    return
+  }
+  const userId = Number(req.body?.userId)
+  const friend = (await listFriends(req.user.id)).find((f) => Number(f.id) === userId)
+  if (!friend) {
+    res.status(400).json({ error: 'You can only add friends' })
+    return
+  }
+  await addGroupMember(req.params.id, userId, req.user.id)
+  const group = await getGroup(req.params.id)
+  res.json({
+    group: { id: group.id, name: group.name, ownerId: Number(group.owner_id), isAdmin: true, members: (await getGroupMembers(req.params.id)).map((m) => ({ user: { id: Number(m.user.id), username: m.user.username, avatar: m.user.avatar }, isAdmin: m.isAdmin })) },
+  })
+}))
+
+/** Admin: remove a member. */
+app.delete('/api/social/groups/:id/members/:userId', ah(async (req, res) => {
+  const membership = await isGroupMember(req.params.id, req.user.id)
+  if (!membership?.admin) {
+    res.status(403).json({ error: 'Only group admins can remove members' })
+    return
+  }
+  const userId = Number(req.params.userId)
+  const group = await getGroup(req.params.id)
+  if (Number(group.owner_id) === userId) {
+    res.status(400).json({ error: 'The owner cannot be removed' })
+    return
+  }
+  await removeGroupMember(req.params.id, userId)
+  res.json({ ok: true })
+}))
+
+/** Admin: promote a member to admin. Body: { userId }. */
+app.post('/api/social/groups/:id/admins', ah(async (req, res) => {
+  const membership = await isGroupMember(req.params.id, req.user.id)
+  if (!membership?.admin) {
+    res.status(403).json({ error: 'Only group admins can promote members' })
+    return
+  }
+  const userId = Number(req.body?.userId)
+  const target = await isGroupMember(req.params.id, userId)
+  if (!target) {
+    res.status(404).json({ error: 'User is not a member of this group' })
+    return
+  }
+  await addGroupMember(req.params.id, userId, req.user.id, true)
+  res.json({ ok: true })
+}))
+
 /** Upload a profile picture for the signed-in account. */
 app.post('/api/auth/avatar', requireAuth, upload.single('image'), ah(async (req, res) => {
   if (!req.file) {
@@ -474,10 +895,11 @@ app.post('/api/auth/avatar', requireAuth, upload.single('image'), ah(async (req,
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }))
 
-// Uploaded images are private: only the owning account may view them.
+// Uploaded images are viewable by any signed-in account so friends can see
+// avatars, post photos and group images. Everything is still behind login.
 app.get('/api/uploads/:id', requireAuth, ah(async (req, res) => {
   const uploadRow = await getUpload(req.params.id)
-  if (!uploadRow || Number(uploadRow.user_id) !== req.user.id) {
+  if (!uploadRow) {
     res.status(404).json({ error: 'Not found' })
     return
   }

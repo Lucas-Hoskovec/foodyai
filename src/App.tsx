@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Bookmark, Clock, Mic as MicIcon, RotateCcw, Send, Sparkles, Trash2 } from 'lucide-react'
+import { Bookmark, Clock, LogIn, Mic as MicIcon, RotateCcw, Send, Sparkles, Trash2, Users } from 'lucide-react'
 import type { FridgeItem, Phase, Recipe, Tab } from '@/lib/types'
 import { useVoice } from '@/lib/voice'
 import { parseIntent, generateRecipe, updatePreferences, updateFridge } from '@/lib/nim'
 import { useFoodyStore } from '@/lib/store'
+import { useSocial } from '@/lib/useSocial'
 import { findRecipeImage } from '@/lib/recipeImage'
 import { useAuth, type Auth } from '@/lib/auth'
 import { cn } from '@/lib/utils'
@@ -20,6 +21,7 @@ import { FridgeView } from '@/components/FridgeView'
 import { FridgeAddModal } from '@/components/FridgeAddModal'
 import { FridgePhotoScanner } from '@/components/FridgePhotoScanner'
 import { TasteSetupModal } from '@/components/TasteSetupModal'
+import { SocialView } from '@/components/SocialView'
 import { Switch } from '@/components/Switch'
 
 const EXAMPLE_POOL = [
@@ -78,11 +80,12 @@ function App() {
 
 function AppShell({ auth }: { auth: Auth }) {
   const user = auth.user
-  const store = useFoodyStore(Boolean(user))
   const justRegistered = Boolean(auth.justRegistered)
+  const [tab, setTab] = useState<Tab>(justRegistered ? 'me' : 'home')
+  const store = useFoodyStore(Boolean(user))
+  const social = useSocial(Boolean(user), { poll: tab === 'social' })
 
   const [phase, setPhase] = useState<Phase>('idle')
-  const [tab, setTab] = useState<Tab>(justRegistered ? 'me' : 'home')
   const [setupOpen, setSetupOpen] = useState(justRegistered)
   const [text, setText] = useState('')
   const [query, setQuery] = useState('')
@@ -330,21 +333,23 @@ function AppShell({ auth }: { auth: Auth }) {
         />
       ) : (
         <main className="relative z-10 mx-auto flex h-full max-w-md flex-col px-5 pb-32 pt-[max(env(safe-area-inset-top),22px)]">
-          <header className="flex items-center justify-between">
-            <span className="text-lg font-bold tracking-tight">Foody AI</span>
-            <ProfileMenu
-              user={user}
-              onOpenSettings={() => setSettingsOpen(true)}
-              onOpenProfile={() => setTab('me')}
-              onOpenAuth={(mode = 'login') => {
-                setAuthInitial(mode)
-                setAuthOpen(true)
-              }}
-              onLogout={() => void auth.logout()}
-            />
-          </header>
+          {tab !== 'social' && (
+            <header className="flex items-center justify-between">
+              <span className="text-lg font-bold tracking-tight">Foody AI</span>
+              <ProfileMenu
+                user={user}
+                onOpenSettings={() => setSettingsOpen(true)}
+                onOpenProfile={() => setTab('me')}
+                onOpenAuth={(mode = 'login') => {
+                  setAuthInitial(mode)
+                  setAuthOpen(true)
+                }}
+                onLogout={() => void auth.logout()}
+              />
+            </header>
+          )}
 
-          <div className="mt-6 flex-1 overflow-y-auto no-scrollbar">
+          <div className={cn('flex-1 overflow-y-auto no-scrollbar', tab === 'social' ? 'mt-2' : 'mt-6')}>
             {tab === 'home' && (
               <>
                 {!user && <GuestBanner onSignIn={() => setAuthOpen(true)} />}
@@ -397,6 +402,21 @@ function AppShell({ auth }: { auth: Auth }) {
                 onChange={store.setFridge}
               />
             )}
+
+            {tab === 'social' &&
+              (user ? (
+                <SocialView
+                  me={user}
+                  saved={store.saved}
+                  history={store.history}
+                  social={social}
+                  onOpenRecipe={openRecipe}
+                />
+              ) : (
+                <div className="flex min-h-full flex-col items-center justify-center pb-16">
+                  <SocialGuestBanner onSignIn={() => setAuthOpen(true)} />
+                </div>
+              ))}
 
             {tab === 'saved' && (
               <MyRecipesView
@@ -745,6 +765,30 @@ function ThinkingView({ query, elapsed }: { query: string; elapsed: number }) {
         {elapsed > 0 ? `Researching recipes… ${elapsed}s` : 'Researching the best recipes to cure your hunger'}
       </div>
     </div>
+  )
+}
+
+function SocialGuestBanner({ onSignIn }: { onSignIn: () => void }) {
+  return (
+    <GlassCard className="flex max-w-[320px] flex-col items-center gap-3 px-6 py-8 text-center">
+      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white/70">
+        <Users className="h-6 w-6 text-ink/40" strokeWidth={1.6} />
+      </div>
+      <div>
+        <h3 className="text-[16px] font-semibold">Social is for accounts</h3>
+        <p className="mt-1 text-[13px] leading-relaxed text-ink-soft">
+          Follow friends, share your dishes, and chat in groups. Sign in to get started.
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onSignIn}
+        className="pressable inline-flex items-center gap-1.5 rounded-full bg-ink px-4 py-2 text-[13px] font-semibold text-white"
+      >
+        <LogIn className="h-4 w-4" />
+        Sign in
+      </button>
+    </GlassCard>
   )
 }
 

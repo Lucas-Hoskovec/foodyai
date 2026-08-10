@@ -94,7 +94,7 @@ export function FridgeView({ items, onOpenAdd, onChange }: FridgeViewProps) {
         type="button"
         aria-label="Add groceries"
         onClick={onOpenAdd}
-        className="pressable absolute right-5 z-20 flex h-14 w-14 items-center justify-center rounded-full bg-ink text-white shadow-[0_10px_30px_rgba(0,0,0,0.25)] bottom-[calc(max(env(safe-area-inset-bottom),14px)+86px)]"
+        className="pressable absolute right-5 z-20 glass-strong flex h-14 w-14 items-center justify-center rounded-full text-ink shadow-[var(--shadow-glass)] bottom-[calc(max(env(safe-area-inset-bottom),14px)+86px)]"
       >
         <Plus className="h-6 w-6" strokeWidth={2.2} />
       </button>
