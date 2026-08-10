@@ -321,10 +321,10 @@ export const api = {
   },
 
   /** Send a text or recipe message. */
-  async socialSendMessage(groupId: string, input: { type: 'text' | 'recipe'; text?: string; recipe?: Recipe }): Promise<GroupMessage> {
+  async socialSendMessage(groupId: string, input: { type: 'text' | 'recipe'; text?: string; recipe?: Recipe; replyTo?: string | null }): Promise<GroupMessage> {
     const body = (await request(
       `/api/social/groups/${encodeURIComponent(groupId)}/messages`,
-      jsonInit('POST', { type: input.type, text: input.text, recipe: input.recipe }),
+      jsonInit('POST', { type: input.type, text: input.text, recipe: input.recipe, replyTo: input.replyTo ?? null }),
     )) as { message?: GroupMessage }
     if (!body.message) throw new Error('Could not send message')
     return body.message
@@ -341,6 +341,72 @@ export const api = {
     })) as { message?: GroupMessage }
     if (!body.message) throw new Error('Could not send image')
     return body.message
+  },
+
+  /** Mark a message (and everything earlier) as read. */
+  async socialMarkMessageRead(groupId: string, messageId: string): Promise<void> {
+    await request(`/api/social/groups/${encodeURIComponent(groupId)}/messages/${encodeURIComponent(messageId)}/read`, { method: 'POST' })
+  },
+
+  /** Edit one of my own text messages. */
+  async socialEditMessage(groupId: string, messageId: string, text: string): Promise<GroupMessage> {
+    const body = (await request(
+      `/api/social/groups/${encodeURIComponent(groupId)}/messages/${encodeURIComponent(messageId)}`,
+      jsonInit('PATCH', { text }),
+    )) as { message?: GroupMessage }
+    if (!body.message) throw new Error('Could not edit message')
+    return body.message
+  },
+
+  /** Soft-delete a message for everyone (sender or admin). */
+  async socialDeleteMessage(groupId: string, messageId: string): Promise<void> {
+    await request(`/api/social/groups/${encodeURIComponent(groupId)}/messages/${encodeURIComponent(messageId)}`, { method: 'DELETE' })
+  },
+
+  /** Members currently typing in the group (excluding nobody; client filters itself). */
+  async socialTyping(groupId: string): Promise<SocialUser[]> {
+    const body = (await request(`/api/social/groups/${encodeURIComponent(groupId)}/typing`)) as { typing?: SocialUser[] }
+    return body.typing ?? []
+  },
+
+  /** Publish (or clear) my typing heartbeat. */
+  async socialSendTyping(groupId: string, typing: boolean): Promise<void> {
+    await request(`/api/social/groups/${encodeURIComponent(groupId)}/typing`, jsonInit('POST', { typing }))
+  },
+
+  /** Admin: rename the group and/or set its avatar. */
+  async socialRenameGroup(groupId: string, input: { name?: string; avatar?: string | null }): Promise<Group> {
+    const body = (await request(
+      `/api/social/groups/${encodeURIComponent(groupId)}`,
+      jsonInit('PATCH', input),
+    )) as { group?: Group }
+    if (!body.group) throw new Error('Could not update group')
+    return body.group
+  },
+
+  /** Admin: upload a group avatar. */
+  async socialUploadGroupAvatar(groupId: string, file: File): Promise<Group> {
+    const compressed = await compressImageFile(file, { maxEdge: 384 })
+    const form = new FormData()
+    form.append('image', compressed, compressed.name)
+    const body = (await request(`/api/social/groups/${encodeURIComponent(groupId)}/avatar`, { method: 'POST', body: form })) as { group?: Group }
+    if (!body.group) throw new Error('Could not update group avatar')
+    return body.group
+  },
+
+  /** Owner: transfer ownership to another group admin. */
+  async socialTransferOwner(groupId: string, userId: number): Promise<void> {
+    await request(`/api/social/groups/${encodeURIComponent(groupId)}/owner`, jsonInit('POST', { userId }))
+  },
+
+  /** Owner: permanently delete the group and its messages. */
+  async socialDeleteGroup(groupId: string): Promise<void> {
+    await request(`/api/social/groups/${encodeURIComponent(groupId)}`, { method: 'DELETE' })
+  },
+
+  /** Leave a group (owners must delete or transfer instead). */
+  async socialLeaveGroup(groupId: string): Promise<void> {
+    await request(`/api/social/groups/${encodeURIComponent(groupId)}/leave`, { method: 'POST' })
   },
 
   /** Admin: add a member. */

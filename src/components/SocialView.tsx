@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Bookmark, Plus, Search, Users } from 'lucide-react'
+import { MessageCircle, Plus, Search, Users } from 'lucide-react'
 import type { AuthUser } from '@/lib/api'
 import type { Group, Post, Recipe, SocialUser } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -8,6 +8,7 @@ import { CreateGroupModal } from './CreateGroupModal'
 import { CreatePostModal } from './CreatePostModal'
 import { FeedView } from './FeedView'
 import { GroupChatView } from './GroupChatView'
+import { GroupSettingsView } from './GroupSettingsView'
 import { GroupsView } from './GroupsView'
 import { PostDetailView } from './PostDetailView'
 import { SearchUsersModal } from './SearchUsersModal'
@@ -22,7 +23,7 @@ interface SocialViewProps {
   onOpenRecipe: (recipe: Recipe) => void
 }
 
-type View = { name: 'root' } | { name: 'profile'; userId: number } | { name: 'group'; group: Group } | { name: 'post'; post: Post; from: View }
+type View = { name: 'root' } | { name: 'profile'; userId: number } | { name: 'group'; group: Group } | { name: 'groupSettings'; group: Group } | { name: 'post'; post: Post; from: View }
 
 export function SocialView({ me, saved, history, social, onOpenRecipe }: SocialViewProps) {
   const [view, setView] = useState<View>({ name: 'root' })
@@ -93,10 +94,10 @@ export function SocialView({ me, saved, history, social, onOpenRecipe }: SocialV
         <GroupChatView
           groupId={view.group.id}
           meId={me.id}
-          friends={social.friends}
           saved={saved}
           history={history}
           onBack={() => setView({ name: 'root' })}
+          onOpenSettings={() => setView({ name: 'groupSettings', group: view.group })}
           onOpenRecipe={onOpenRecipe}
           onOpenProfile={openProfile}
         />
@@ -104,6 +105,19 @@ export function SocialView({ me, saved, history, social, onOpenRecipe }: SocialV
           <CreatePostModal saved={saved} history={history} onCreated={(post) => { social.prependPost(post); setCreatePostOpen(false) }} onClose={() => setCreatePostOpen(false)} />
         )}
       </>
+    )
+  }
+
+  if (view.name === 'groupSettings' && me) {
+    return (
+      <GroupSettingsView
+        groupId={view.group.id}
+        meId={me.id}
+        friends={social.friends}
+        onBack={() => setView({ name: 'group', group: view.group })}
+        onExit={() => setView({ name: 'root' })}
+        onOpenProfile={openProfile}
+      />
     )
   }
 
@@ -136,7 +150,7 @@ export function SocialView({ me, saved, history, social, onOpenRecipe }: SocialV
 
       <GlassSegmented className="mt-5 flex items-center gap-1 p-1">
         <SegmentedButton icon={<Users className="h-4 w-4" />} label="Feed" active={section === 'feed'} onClick={() => setSection('feed')} />
-        <SegmentedButton icon={<Bookmark className="h-4 w-4" />} label="Groups" active={section === 'groups'} onClick={() => setSection('groups')} />
+        <SegmentedButton icon={<MessageCircle className="h-4 w-4" />} label="Groups" active={section === 'groups'} onClick={() => setSection('groups')} />
       </GlassSegmented>
 
       <div className="mt-5 flex-1">
@@ -155,7 +169,7 @@ export function SocialView({ me, saved, history, social, onOpenRecipe }: SocialV
             />
           ) : null
         ) : (
-          <GroupsView groups={social.groups} onOpenGroup={(group) => setView({ name: 'group', group })} onCreate={() => setCreateGroupOpen(true)} />
+          <GroupsView groups={social.groups} onOpenGroup={(group) => { social.clearUnread(group.id); setView({ name: 'group', group }) }} />
         )}
       </div>
 
@@ -164,6 +178,17 @@ export function SocialView({ me, saved, history, social, onOpenRecipe }: SocialV
           type="button"
           aria-label="New post"
           onClick={() => setCreatePostOpen(true)}
+          className="pressable absolute right-5 z-20 bottom-[calc(max(env(safe-area-inset-bottom),14px)+86px)] glass-strong flex h-14 w-14 items-center justify-center rounded-full text-ink shadow-[var(--shadow-glass)]"
+        >
+          <Plus className="h-6 w-6" strokeWidth={2.2} />
+        </button>
+      )}
+
+      {section === 'groups' && (
+        <button
+          type="button"
+          aria-label="New group"
+          onClick={() => setCreateGroupOpen(true)}
           className="pressable absolute right-5 z-20 bottom-[calc(max(env(safe-area-inset-bottom),14px)+86px)] glass-strong flex h-14 w-14 items-center justify-center rounded-full text-ink shadow-[var(--shadow-glass)]"
         >
           <Plus className="h-6 w-6" strokeWidth={2.2} />

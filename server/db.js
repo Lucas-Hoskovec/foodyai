@@ -547,30 +547,49 @@ export async function removeGroupMember(groupId, userId) {
 
 export async function listMyGroups(userId) {
   const { rows } = await pool.query(
-    `SELECT g.id, g.name, g.owner_id, g.created_at,
-            gm.is_admin,
+    `SELECT g.id, g.name, g.owner_id, g.avatar, g.created_at,
+            gm.is_admin, gm.last_read_at,
             (SELECT array_agg(u.id::text ORDER BY gm2.created_at) FROM group_members gm2 JOIN users u ON u.id = gm2.user_id WHERE gm2.group_id = g.id) AS member_ids,
-            (SELECT count(*)::int FROM group_members gm3 WHERE gm3.group_id = g.id) AS member_count
+            (SELECT count(*)::int FROM group_members gm3 WHERE gm3.group_id = g.id) AS member_count,
+            (SELECT count(*)::int FROM group_messages gm4 WHERE gm4.group_id = g.id AND gm4.created_at > COALESCE(gm.last_read_at, 0)) AS unread_count,
+            lm.last_type, lm.last_text, lm.last_created_at, lm.last_deleted_at, lm.last_sender_id, lm.last_sender_name
      FROM group_members gm
      JOIN groups g ON g.id = gm.group_id
+     LEFT JOIN LATERAL (
+       SELECT m.type AS last_type, m.text AS last_text, m.created_at AS last_created_at, m.deleted_at AS last_deleted_at,
+              m.sender_id AS last_sender_id, u.username AS last_sender_name
+       FROM group_messages m JOIN users u ON u.id = m.sender_id
+       WHERE m.group_id = g.id
+       ORDER BY m.created_at DESC LIMIT 1
+     ) lm ON true
      WHERE gm.user_id = $1
-     ORDER BY g.created_at DESC`,
+     ORDER BY COALESCE(lm.last_created_at, g.created_at) DESC`,
     [Number(userId)],
   )
   return rows.map((r) => ({
     id: r.id,
     name: r.name,
     ownerId: Number(r.owner_id),
+    avatar: r.avatar ?? null,
     isAdmin: Boolean(r.is_admin),
     memberCount: Number(r.member_count),
     memberIds: Array.isArray(r.member_ids) ? r.member_ids.map(Number) : [],
+    unreadCount: r.last_created_at == null ? 0 : Number(r.unread_count),
+    lastMessage: r.last_created_at == null ? null : {
+      type: r.last_type,
+      text: r.last_text,
+      senderId: Number(r.last_sender_id),
+      senderName: r.last_sender_name,
+      createdAt: Number(r.last_created_at),
+      deletedAt: r.last_deleted_at ? Number(r.last_deleted_at) : null,
+    },
     createdAt: Number(r.created_at),
   }))
 }
 
 export async function getGroup(groupId) {
   const { rows } = await pool.query(
-    `SELECT g.id, g.name, g.owner_id, g.created_at FROM groups g WHERE g.id = $1`,
+    `SELECT g.id, g.name, g.owner_id, g.avatar, g.created_at FROM groups g WHERE g.id = $1`,
     [String(groupId)],
   )
   return rows[0] ?? null
@@ -600,26 +619,118 @@ export async function isGroupMember(groupId, userId) {
 
 export async function createGroupMessage(msg) {
   await pool.query(
-    `INSERT INTO group_messages (id, group_id, sender_id, type, text, image, recipe_json, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-    [msg.id, String(msg.group_id), Number(msg.sender_id), msg.type, msg.text ?? '', msg.image ?? '', msg.recipe_json ?? '', msg.created_at ?? Date.now()],
+    `INSERT INTO group_messages (id, group_id, sender_id, type, text, image, recipe_json, reply_to, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    [msg.id, String(msg.group_id), Number(msg.sender_id), msg.type, msg.text ?? '', msg.image ?? '', msg.recipe_json ?? '', msg.reply_to ?? null, msg.created_at ?? Date.now()],
+  )
+}
+
+/** Fetch a single message's group + sender, used for ownership checks. */
+export async function getGroupMessageForCheck(messageId) {
+  const { rows } = await pool.query(
+    `SELECT id, group_id, sender_id, type, deleted_at, created_at FROM group_messages WHERE id = $1`,
+    [String(messageId)],
+  )
+  return rows[0] ?? null
+}
+
+export async function updateGroupMessageText(messageId, text) {
+  await pool.query(
+    `UPDATE group_messages SET text = $2, edited_at = $3 WHERE id = $1`,
+    [String(messageId), text, Date.now()],
+  )
+}
+
+export async function softDeleteGroupMessage(messageId) {
+  await pool.query(
+    `UPDATE group_messages SET deleted_at = $2 WHERE id = $1`,
+    [String(messageId), Date.now()],
+  )
+}
+
+/** Record that `userId` has read up to `at` (ms epoch) inside `groupId`. */
+export async function setLastRead(groupId, userId, at) {
+  await pool.query(
+    `UPDATE group_members SET last_read_at = GREATEST(last_read_at, $3) WHERE group_id = $1 AND user_id = $2`,
+    [String(groupId), Number(userId), Math.max(0, Number(at) || 0)],
   )
 }
 
 export async function listGroupMessages(groupId, limit = 200) {
   const { rows } = await pool.query(
-    `SELECT m.*, u.username, u.avatar
-     FROM group_messages m JOIN users u ON u.id = m.sender_id
+    `SELECT m.*, u.username, u.avatar,
+            r.type AS reply_type, r.text AS reply_text, r.image AS reply_image, r.recipe_json AS reply_recipe_json,
+            r.sender_id AS reply_sender_id, r.deleted_at AS reply_deleted_at,
+            ru.username AS reply_sender_name, ru.avatar AS reply_sender_avatar
+     FROM group_messages m
+     JOIN users u ON u.id = m.sender_id
+     LEFT JOIN group_messages r ON r.id = m.reply_to
+     LEFT JOIN users ru ON ru.id = r.sender_id
      WHERE m.group_id = $1 ORDER BY m.created_at DESC LIMIT $2`,
     [String(groupId), limit],
   )
-  return rows.reverse().map((r) => ({
-    id: r.id,
-    sender: { id: Number(r.sender_id), username: r.username, avatar: r.avatar },
-    type: r.type,
-    text: r.text,
-    image: r.image,
-    recipe: r.recipe_json ? (() => { try { return JSON.parse(r.recipe_json) } catch { return null } })() : null,
-    createdAt: Number(r.created_at),
-  }))
+  const readMap = await getReadMap(groupId)
+  return rows.reverse().map((r) => {
+    const createdAt = Number(r.created_at)
+    let replyTo = null
+    if (r.reply_to) {
+      replyTo = {
+        id: r.reply_to,
+        sender: { id: Number(r.reply_sender_id), username: r.reply_sender_name, avatar: r.reply_sender_avatar },
+        type: r.reply_type,
+        text: r.reply_text ?? '',
+        image: r.reply_image ?? '',
+        recipe: (() => { try { return JSON.parse(r.reply_recipe_json ?? '') } catch { return null } })(),
+        deletedAt: r.reply_deleted_at ? Number(r.reply_deleted_at) : null,
+      }
+    }
+    return {
+      id: r.id,
+      sender: { id: Number(r.sender_id), username: r.username, avatar: r.avatar },
+      type: r.type,
+      text: r.text,
+      image: r.image,
+      recipe: r.recipe_json ? (() => { try { return JSON.parse(r.recipe_json) } catch { return null } })() : null,
+      replyTo,
+      readBy: readMap.filter((u) => u.lastReadAt >= createdAt).map((u) => u.userId),
+      editedAt: r.edited_at ? Number(r.edited_at) : null,
+      deletedAt: r.deleted_at ? Number(r.deleted_at) : null,
+      createdAt,
+    }
+  })
+}
+
+/** Per-member "last message read" timestamps, used to compute readBy + unread counts. */
+export async function getReadMap(groupId) {
+  const { rows } = await pool.query(
+    `SELECT user_id, last_read_at FROM group_members WHERE group_id = $1`,
+    [String(groupId)],
+  )
+  return rows.map((r) => ({ userId: Number(r.user_id), lastReadAt: Number(r.last_read_at) }))
+}
+
+/** Admin-level edits: rename and/or set the avatar (pass avatar: null to clear). */
+export async function updateGroup(groupId, fields) {
+  const sets = []
+  const vals = []
+  if (fields.name !== undefined) {
+    sets.push(`name = $${sets.length + 1}`)
+    vals.push(String(fields.name))
+  }
+  if (fields.avatar !== undefined) {
+    sets.push(`avatar = $${sets.length + 1}`)
+    vals.push(fields.avatar == null ? null : String(fields.avatar))
+  }
+  if (sets.length === 0) return
+  vals.push(String(groupId))
+  await pool.query(`UPDATE groups SET ${sets.join(', ')} WHERE id = $${vals.length}`, vals)
+}
+
+export async function transferOwnership(groupId, newOwnerId) {
+  await pool.query(`UPDATE groups SET owner_id = $2 WHERE id = $1`, [String(groupId), Number(newOwnerId)])
+  await pool.query(`UPDATE group_members SET is_admin = 1 WHERE group_id = $1 AND user_id = $2`, [String(groupId), Number(newOwnerId)])
+}
+
+export async function deleteGroup(groupId) {
+  await pool.query(`DELETE FROM groups WHERE id = $1`, [String(groupId)])
 }

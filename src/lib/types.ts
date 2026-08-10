@@ -96,11 +96,23 @@ export interface Group {
   id: string
   name: string
   ownerId: number
+  avatar: string | null
   isAdmin: boolean
   memberCount: number
   memberIds: number[]
+  unreadCount?: number
+  lastMessage?: GroupLastMessage | null
   createdAt: number
   members?: GroupMember[]
+}
+
+export interface GroupLastMessage {
+  type: GroupMessageType
+  text: string
+  senderId: number
+  senderName: string
+  createdAt: number
+  deletedAt: number | null
 }
 
 export interface GroupMember {
@@ -117,5 +129,19 @@ export interface GroupMessage {
   text: string
   image: string
   recipe: Recipe | null
+  replyTo: GroupMessageReply | null
+  readBy: number[]
+  editedAt: number | null
+  deletedAt: number | null
   createdAt: number
+}
+
+export interface GroupMessageReply {
+  id: string
+  sender: SocialUser
+  type: GroupMessageType
+  text: string
+  image: string
+  recipe: Recipe | null
+  deletedAt: number | null
 }

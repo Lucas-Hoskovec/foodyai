@@ -111,6 +111,7 @@ create table if not exists groups (
   id text primary key,
   name text not null,
   owner_id bigint not null references users(id) on delete cascade,
+  avatar text,
   created_at bigint not null
 );
 
@@ -119,6 +120,7 @@ create table if not exists group_members (
   user_id bigint not null references users(id) on delete cascade,
   is_admin integer not null default 0,
   added_by bigint not null references users(id) on delete cascade,
+  last_read_at bigint not null default 0,
   created_at bigint not null,
   primary key (group_id, user_id)
 );
@@ -132,6 +134,17 @@ create table if not exists group_messages (
   text text not null default '',
   image text not null default '',
   recipe_json text not null default '',
+  reply_to text,
+  edited_at bigint,
+  deleted_at bigint,
   created_at bigint not null
 );
 create index if not exists group_messages_group_created_idx on group_messages (group_id, created_at asc);
+
+-- ---- Migration for older-but-obsolete gaps ----
+-- Columns added later to the group tables. Safe to re-run on any database.
+alter table groups add column if not exists avatar text;
+alter table group_members add column if not exists last_read_at bigint not null default 0;
+alter table group_messages add column if not exists reply_to text;
+alter table group_messages add column if not exists edited_at bigint;
+alter table group_messages add column if not exists deleted_at bigint;

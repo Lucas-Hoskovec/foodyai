@@ -56,7 +56,7 @@ export function useSocial(active = true, options?: { poll?: boolean }) {
   // the Social tab is open. Comments poll inside CommentsSection themselves.
   useEffect(() => {
     if (!active || !options?.poll) return
-    const timer = window.setInterval(() => void refresh(), 10_000)
+    const timer = window.setInterval(() => void refresh(), 1_000)
     return () => window.clearInterval(timer)
   }, [active, options?.poll, refresh])
 
@@ -184,6 +184,11 @@ export function useSocial(active = true, options?: { poll?: boolean }) {
     [],
   )
 
+  /** Optimistically zero a group's unread badge (kept at zero by the server once read). */
+  const clearUnread = useCallback((groupId: string) => {
+    setGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, unreadCount: 0 } : g)))
+  }, [])
+
   return {
     feed,
     groups,
@@ -204,6 +209,7 @@ export function useSocial(active = true, options?: { poll?: boolean }) {
     declineRequest,
     removeFriend,
     createGroup,
+    clearUnread,
   }
 }
 

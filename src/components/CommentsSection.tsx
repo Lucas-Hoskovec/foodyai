@@ -44,7 +44,7 @@ export function CommentsSection({ postId, me, onOpenProfile, onCommentAdded, onC
 
   // Re-fetch comments every 10s so new ones appear live, without flickering.
   useEffect(() => {
-    const timer = window.setInterval(() => void load(true), 10_000)
+    const timer = window.setInterval(() => void load(true), 1_000)
     return () => window.clearInterval(timer)
   }, [load])
 

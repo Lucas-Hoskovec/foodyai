@@ -47,7 +47,8 @@ import {
   searchUsers, createFriendRequest, getFriendRequest, listIncomingRequests, deleteFriendRequest, addFriendship,
   removeFriendship, listFriends, isFriend, deleteFriendRequestByPair, createPost, listFeed, listPostsByUser, deletePost, toggleLike, unlike,
   totalLikes, createComment, listCommentsByPost, deleteCommentIfOwner, createGroup, addGroupMember, removeGroupMember, listMyGroups, getGroup, getGroupMembers,
-  isGroupMember, createGroupMessage, listGroupMessages,
+  isGroupMember, createGroupMessage, listGroupMessages, getGroupMessageForCheck, updateGroupMessageText, softDeleteGroupMessage, setLastRead,
+  updateGroup, transferOwnership, deleteGroup,
 } from './db.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -88,6 +89,11 @@ const NIM_BASE = 'https://integrate.api.nvidia.com/v1'
 const NIM_KEY = env.NIM_API_KEY ?? env.VITE_NIM_API_KEY
 const NIM_MODEL = env.NIM_MODEL ?? env.VITE_NIM_MODEL ?? 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning'
 const PORT = Number(env.PORT ?? 3001)
+
+// In-memory "who is typing in which group" heartbeats. Fine for a single
+// instance; on a multi-replica deploy this would move to a shared store.
+const typingGroups = new Map() // groupId -> Map(userId -> lastHeartbeatAt)
+const TYPING_TTL = 5000
 
 const app = express()
 app.use(cors({ origin: true, credentials: true }))
@@ -747,6 +753,7 @@ app.get('/api/social/groups/:id', ah(async (req, res) => {
       id: group.id,
       name: group.name,
       ownerId: Number(group.owner_id),
+      avatar: group.avatar ?? null,
       isAdmin: membership.admin,
       members: (await getGroupMembers(req.params.id)).map((m) => ({
         user: { id: Number(m.user.id), username: m.user.username, avatar: m.user.avatar },
@@ -790,6 +797,11 @@ app.post('/api/social/groups/:id/messages', ah(async (req, res) => {
       return
     }
   }
+  let replyTo = null
+  if (typeof req.body?.replyTo === 'string' && req.body.replyTo) {
+    const target = await getGroupMessageForCheck(req.body.replyTo)
+    if (target && String(target.group_id) === String(req.params.id)) replyTo = target.id
+  }
   await createGroupMessage({
     id: randomUUID(),
     group_id: req.params.id,
@@ -798,6 +810,7 @@ app.post('/api/social/groups/:id/messages', ah(async (req, res) => {
     text,
     image: '',
     recipe_json: recipeJson,
+    reply_to: replyTo,
   })
   const messages = await listGroupMessages(req.params.id)
   res.status(201).json({ message: messages[messages.length - 1] })
@@ -844,7 +857,7 @@ app.post('/api/social/groups/:id/members', ah(async (req, res) => {
   await addGroupMember(req.params.id, userId, req.user.id)
   const group = await getGroup(req.params.id)
   res.json({
-    group: { id: group.id, name: group.name, ownerId: Number(group.owner_id), isAdmin: true, members: (await getGroupMembers(req.params.id)).map((m) => ({ user: { id: Number(m.user.id), username: m.user.username, avatar: m.user.avatar }, isAdmin: m.isAdmin })) },
+    group: { id: group.id, name: group.name, ownerId: Number(group.owner_id), avatar: group.avatar ?? null, isAdmin: true, members: (await getGroupMembers(req.params.id)).map((m) => ({ user: { id: Number(m.user.id), username: m.user.username, avatar: m.user.avatar }, isAdmin: m.isAdmin })) },
   })
 }))
 
@@ -879,6 +892,206 @@ app.post('/api/social/groups/:id/admins', ah(async (req, res) => {
     return
   }
   await addGroupMember(req.params.id, userId, req.user.id, true)
+  res.json({ ok: true })
+}))
+
+/** Mark a message (and everything before it) as read. */
+app.post('/api/social/groups/:id/messages/:messageId/read', ah(async (req, res) => {
+  const membership = await isGroupMember(req.params.id, req.user.id)
+  if (!membership) {
+    res.status(403).json({ error: 'You are not a member of this group' })
+    return
+  }
+  const message = await getGroupMessageForCheck(req.params.messageId)
+  if (!message || String(message.group_id) !== String(req.params.id)) {
+    res.status(404).json({ error: 'Message not found' })
+    return
+  }
+  await setLastRead(req.params.id, req.user.id, Number(message.created_at))
+  res.json({ ok: true })
+}))
+
+/** Edit one of my own text messages (any time). Body: { text }. */
+app.patch('/api/social/groups/:id/messages/:messageId', ah(async (req, res) => {
+  const membership = await isGroupMember(req.params.id, req.user.id)
+  if (!membership) {
+    res.status(403).json({ error: 'You are not a member of this group' })
+    return
+  }
+  const message = await getGroupMessageForCheck(req.params.messageId)
+  if (!message || String(message.group_id) !== String(req.params.id)) {
+    res.status(404).json({ error: 'Message not found' })
+    return
+  }
+  if (message.sender_id !== req.user.id) {
+    res.status(403).json({ error: 'You can only edit your own messages' })
+    return
+  }
+  if (message.type !== 'text') {
+    res.status(400).json({ error: 'Only text messages can be edited' })
+    return
+  }
+  if (message.deleted_at) {
+    res.status(400).json({ error: 'This message was deleted' })
+    return
+  }
+  const text = typeof req.body?.text === 'string' ? req.body.text.trim() : ''
+  if (!text || text.length > 1000) {
+    res.status(400).json({ error: 'A message between 1 and 1000 characters is required' })
+    return
+  }
+  await updateGroupMessageText(req.params.messageId, text)
+  const messages = await listGroupMessages(req.params.id)
+  res.json({ message: messages.find((m) => m.id === req.params.messageId) })
+}))
+
+/** Soft-delete a message for everyone (sender or any admin). */
+app.delete('/api/social/groups/:id/messages/:messageId', ah(async (req, res) => {
+  const membership = await isGroupMember(req.params.id, req.user.id)
+  if (!membership) {
+    res.status(403).json({ error: 'You are not a member of this group' })
+    return
+  }
+  const message = await getGroupMessageForCheck(req.params.messageId)
+  if (!message || String(message.group_id) !== String(req.params.id)) {
+    res.status(404).json({ error: 'Message not found' })
+    return
+  }
+  if (Number(message.sender_id) !== req.user.id && !membership.admin) {
+    res.status(403).json({ error: 'Only the sender or a group admin can delete this message' })
+    return
+  }
+  if (!message.deleted_at) await softDeleteGroupMessage(req.params.messageId)
+  res.json({ ok: true })
+}))
+
+/** Who is typing right now (heartbeat map, ~5s window). */
+app.get('/api/social/groups/:id/typing', ah(async (req, res) => {
+  const membership = await isGroupMember(req.params.id, req.user.id)
+  if (!membership) {
+    res.status(403).json({ error: 'You are not a member of this group' })
+    return
+  }
+  const now = Date.now()
+  const entries = typingGroups.get(req.params.id)
+  const typing = []
+  if (entries) {
+    for (const [userId, lastAt] of entries) {
+      if (now - lastAt > TYPING_TTL) continue
+      const user = await getUserById(userId)
+      if (user) typing.push({ id: Number(user.id), username: user.username, avatar: user.avatar })
+    }
+  }
+  res.json({ typing })
+}))
+
+/** Publish (or clear) my typing heartbeat. Body: { typing?: boolean }. */
+app.post('/api/social/groups/:id/typing', ah(async (req, res) => {
+  const membership = await isGroupMember(req.params.id, req.user.id)
+  if (!membership) {
+    res.status(403).json({ error: 'You are not a member of this group' })
+    return
+  }
+  if (req.body?.typing === false) {
+    typingGroups.get(req.params.id)?.delete(req.user.id)
+  } else {
+    if (!typingGroups.has(req.params.id)) typingGroups.set(req.params.id, new Map())
+    typingGroups.get(req.params.id).set(req.user.id, Date.now())
+  }
+  res.json({ ok: true })
+}))
+
+/** Admin: rename the group and/or set (or clear) its avatar. Body: { name?, avatar? }. */
+app.patch('/api/social/groups/:id', ah(async (req, res) => {
+  const membership = await isGroupMember(req.params.id, req.user.id)
+  if (!membership?.admin) {
+    res.status(403).json({ error: 'Only group admins can edit the group' })
+    return
+  }
+  const fields = {}
+  if (typeof req.body?.name === 'string') {
+    const name = req.body.name.trim().slice(0, 60)
+    if (!name) {
+      res.status(400).json({ error: 'A group name is required' })
+      return
+    }
+    fields.name = name
+  }
+  if (req.body?.avatar === null || typeof req.body?.avatar === 'string') fields.avatar = req.body.avatar
+  if (Object.keys(fields).length > 0) await updateGroup(req.params.id, fields)
+  const entry = (await listMyGroups(req.user.id)).find((g) => g.id === req.params.id)
+  res.json({ group: entry ?? { id: req.params.id } })
+}))
+
+/** Admin: upload a group avatar photo. */
+app.post('/api/social/groups/:id/avatar', upload.single('image'), ah(async (req, res) => {
+  const membership = await isGroupMember(req.params.id, req.user.id)
+  if (!membership?.admin) {
+    res.status(403).json({ error: 'Only group admins can change the avatar' })
+    return
+  }
+  if (!req.file) {
+    res.status(400).json({ error: 'No image file was provided' })
+    return
+  }
+  const avatar = await storeUpload(req.user.id, req.file.mimetype, req.file.buffer)
+  await updateGroup(req.params.id, { avatar })
+  const entry = (await listMyGroups(req.user.id)).find((g) => g.id === req.params.id)
+  res.json({ group: entry ?? { id: req.params.id } })
+}))
+
+/** Owner: transfer ownership to another admin. Body: { userId }. */
+app.post('/api/social/groups/:id/owner', ah(async (req, res) => {
+  const group = await getGroup(req.params.id)
+  if (!group) {
+    res.status(404).json({ error: 'Group not found' })
+    return
+  }
+  if (Number(group.owner_id) !== req.user.id) {
+    res.status(403).json({ error: 'Only the owner can transfer ownership' })
+    return
+  }
+  const targetId = Number(req.body?.userId)
+  const target = await isGroupMember(req.params.id, targetId)
+  if (!target || !target.admin) {
+    res.status(400).json({ error: 'The new owner must be a group admin' })
+    return
+  }
+  await transferOwnership(req.params.id, targetId)
+  res.json({ ok: true })
+}))
+
+/** Owner: permanently delete the group and all of its messages. */
+app.delete('/api/social/groups/:id', ah(async (req, res) => {
+  const group = await getGroup(req.params.id)
+  if (!group) {
+    res.status(404).json({ error: 'Group not found' })
+    return
+  }
+  if (Number(group.owner_id) !== req.user.id) {
+    res.status(403).json({ error: 'Only the owner can delete the group' })
+    return
+  }
+  await deleteGroup(req.params.id)
+  res.json({ ok: true })
+}))
+
+/** Leave a group. Owners must delete the group or transfer ownership instead. */
+app.post('/api/social/groups/:id/leave', ah(async (req, res) => {
+  const group = await getGroup(req.params.id)
+  if (!group) {
+    res.status(404).json({ error: 'Group not found' })
+    return
+  }
+  if (Number(group.owner_id) === req.user.id) {
+    res.status(400).json({ error: 'As the owner, delete the group or transfer ownership to leave' })
+    return
+  }
+  if (!(await isGroupMember(req.params.id, req.user.id))) {
+    res.status(403).json({ error: 'You are not a member of this group' })
+    return
+  }
+  await removeGroupMember(req.params.id, req.user.id)
   res.json({ ok: true })
 }))
 

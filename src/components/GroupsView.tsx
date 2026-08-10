@@ -1,15 +1,25 @@
-import { Crown, MessagesSquare, Plus } from 'lucide-react'
+import { Crown, MessagesSquare } from 'lucide-react'
 import type { Group } from '@/lib/types'
+import { cn } from '@/lib/utils'
+import { timeAgo } from '@/lib/time'
+import { Avatar } from './Avatar'
 import { EmptyState } from './EmptyState'
 import { GlassCard } from './GlassCard'
 
 interface GroupsViewProps {
   groups: Group[]
   onOpenGroup: (group: Group) => void
-  onCreate: () => void
 }
 
-export function GroupsView({ groups, onOpenGroup, onCreate }: GroupsViewProps) {
+function preview(group: Group): string {
+  if (!group.lastMessage) return 'No messages yet'
+  if (group.lastMessage.deletedAt) return 'This message was deleted'
+  const body =
+    group.lastMessage.type === 'image' ? 'Photo' : group.lastMessage.type === 'recipe' ? 'Recipe' : group.lastMessage.text
+  return `${group.lastMessage.senderName}: ${body}`
+}
+
+export function GroupsView({ groups, onOpenGroup }: GroupsViewProps) {
   if (groups.length === 0) {
     return (
       <div className="flex min-h-full flex-col items-center justify-center pb-16">
@@ -26,30 +36,28 @@ export function GroupsView({ groups, onOpenGroup, onCreate }: GroupsViewProps) {
       {groups.map((group) => (
         <button key={group.id} type="button" onClick={() => onOpenGroup(group)} className="pressable text-left">
           <GlassCard strong className="flex items-center gap-3 px-4 py-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-ink/[0.06]">
-              <MessagesSquare className="h-6 w-6 text-ink" strokeWidth={1.8} />
-            </div>
+            <Avatar name={group.name} avatar={group.avatar} size={48} />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5">
                 <span className="truncate text-[15px] font-semibold">{group.name}</span>
                 {group.isAdmin && <Crown className="h-3.5 w-3.5 shrink-0 text-amber-500" />}
               </div>
-              <span className="text-[12px] text-ink-soft">
+              <span className="mt-0.5 block truncate text-[12px] text-ink-soft">{preview(group)}</span>
+              <span className="mt-0.5 block text-[11px] text-ink-faint">
                 {group.memberCount} {group.memberCount === 1 ? 'member' : 'members'}
               </span>
+            </div>
+            <div className="flex shrink-0 flex-col items-end gap-1.5">
+              <span className="text-[11px] text-ink-faint">{group.lastMessage ? timeAgo(group.lastMessage.createdAt) : ''}</span>
+              {(group.unreadCount ?? 0) > 0 && (
+                <span className={cn('flex h-5 min-w-5 items-center justify-center rounded-full bg-ink px-1.5 text-[10px] font-bold text-white')}>
+                  {group.unreadCount}
+                </span>
+              )}
             </div>
           </GlassCard>
         </button>
       ))}
-
-      <button
-        type="button"
-        aria-label="New group"
-        onClick={onCreate}
-        className="pressable absolute right-5 z-20 bottom-[calc(max(env(safe-area-inset-bottom),14px)+86px)] flex h-14 w-14 items-center justify-center rounded-full bg-ink text-white shadow-[0_10px_30px_rgba(0,0,0,0.25)]"
-      >
-        <Plus className="h-6 w-6" strokeWidth={2.2} />
-      </button>
     </div>
   )
 }
